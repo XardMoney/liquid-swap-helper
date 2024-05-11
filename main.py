@@ -1,5 +1,5 @@
 from aptos_sdk.account import Account
-from core.config import SLEEP_RANGE, TOKENS_INFO
+from core.config import SLEEP_RANGE_BETWEEN_ACCOUNTS, TOKENS_INFO
 from modules.liquidswap.main import LiquidSwapModule
 from utils.file import append_line, clear_file, read_lines
 from settings import USE_PROXY, SHUFFLE_ACCOUNTS, STRICT_PROXY, SEMAPHORE_LIMIT, AMOUNT_PERCENT, AMOUNT_QUANTITY, \
@@ -36,7 +36,7 @@ class Worker:
     async def start_work(self, sleep_needed):
         async with self.semaphore:
             if sleep_needed:
-                await asyncio.sleep(random.randint(*SLEEP_RANGE))
+                await asyncio.sleep(random.randint(*SLEEP_RANGE_BETWEEN_ACCOUNTS))
 
             result = await self.module.swap()
 
@@ -74,7 +74,10 @@ async def main():
     tasks = []
     for i, (proxy, private_key) in enumerate(accounts):
         account = Account.load_key(private_key)
-        module = LiquidSwapModule(account, proxies={'http://': proxy})
+        module = LiquidSwapModule(account, proxies={
+            'http://': proxy,
+            'https://': proxy
+        })
         worker = Worker(semaphore, module)
         tasks.append(
             asyncio.create_task(

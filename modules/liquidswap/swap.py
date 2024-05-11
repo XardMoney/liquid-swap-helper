@@ -1,12 +1,19 @@
 import asyncio
+import random
 from typing import Literal
 
 from aptos_sdk.account import Account
 from aptos_sdk.account_address import AccountAddress
+from aptos_sdk.bcs import Serializer
+from aptos_sdk.transactions import TransactionArgument, EntryFunction
+from aptos_sdk.type_tag import TypeTag, StructTag
 from loguru import logger
 
+import settings
+from core import enums
 from core.base import ModuleBase
-from contracts.base import TokenBase
+from core.contracts import TokenBase
+from core.models import TransactionPayloadData, ModuleExecutionResult
 from modules.liquidswap.config import POOLS_INFO
 from utils.math import get_coins_out_with_fees_stable, d, get_coins_out_with_fees
 
@@ -175,3 +182,145 @@ class LiquidSwapSwap(ModuleBase):
         self.router_address = POOLS_INFO[pool_version]['router_address']
 
         return most_profitable_amount_in
+
+    def calculate_amount_out_from_balance(
+            self,
+            coin_x: TokenBase,
+    ) -> int | None:
+        """
+        Calculates amount out of token with decimals
+        :param coin_x:
+        :return:
+        """
+        initial_balance_x_decimals = self.initial_balance_x_wei / 10 ** self.token_x_decimals
+
+        if self.initial_balance_x_wei == 0:
+            logger.error(f"Wallet {coin_x.symbol.upper()} balance = 0")
+            return None
+
+        if initial_balance_x_decimals < settings.MIN_BALANCE:
+            logger.error(
+                f"Wallet {coin_x.symbol.upper()} balance less than min balance, "
+                f"balance: {initial_balance_x_decimals}, min balance: {settings.MIN_BALANCE}"
+            )
+            return None
+
+        if settings.AMOUNT_PERCENT:
+            min_amount_out_percent, max_amount_out_percent = settings.AMOUNT_PERCENT
+            percent = random.randint(int(min_amount_out_percent), int(max_amount_out_percent)) / 100
+            amount_out_wei = int(self.initial_balance_x_wei * percent)
+        elif settings.AMOUNT_QUANTITY:
+            min_amount_out, max_amount_out = settings.AMOUNT_QUANTITY
+
+            if initial_balance_x_decimals < min_amount_out:
+                logger.error(
+                    f"Wallet {coin_x.symbol.upper()} balance less than min amount out, "
+                    f"balance: {initial_balance_x_decimals}, min amount out: {min_amount_out}"
+                )
+                return None
+
+            if initial_balance_x_decimals < max_amount_out:
+                max_amount_out = initial_balance_x_decimals
+
+            amount_out_wei = self.get_random_amount_out_of_token(min_amount_out, max_amount_out, self.token_x_decimals)
+        else:
+            logger.error('AMOUNT_PERCENT and AMOUNT_QUANTITY is empty value!')
+            return None
+
+        return amount_out_wei
+
+    async def build_transaction_payload(self):
+        amount_out_wei = self.calculate_amount_out_from_balance(coin_x=self.coin_x)
+        if amount_out_wei is None:
+            return None
+
+        amount_in_wei = await self.get_most_profitable_amount_in_and_set_pool_type(
+            amount_out=amount_out_wei,
+            coin_x_address=self.coin_x.contract_address,
+            coin_y_address=self.coin_y.contract_address,
+            coin_x_decimals=self.token_x_decimals,
+            coin_y_decimals=self.token_y_decimals
+        )
+
+        if amount_in_wei is None:
+            return None
+
+        is_registered = await self.is_token_registered_for_address(
+            self.account.address(),
+            self.coin_y.contract_address
+        )
+        if not is_registered:
+            await self.register_coin_for_wallet(
+                self.account,
+                self.coin_y
+            )
+
+        amount_out_decimals = amount_out_wei / 10 ** self.token_x_decimals
+        amount_in_decimals = amount_in_wei / 10 ** self.token_y_decimals
+
+        transaction_args = [
+            TransactionArgument(int(amount_out_wei), Serializer.u64),
+            TransactionArgument(int(amount_in_wei), Serializer.u64)
+        ]
+
+        payload = EntryFunction.natural(
+            f"{self.router_address}::scripts_v2",
+            "swap",
+            [
+                TypeTag(StructTag.from_str(self.coin_x.contract_address)),
+                TypeTag(StructTag.from_str(self.coin_y.contract_address)),
+                TypeTag(StructTag.from_str(f"{self.router_address}::curves::{self.pool_type}"))
+            ],
+            transaction_args
+        )
+
+        return TransactionPayloadData(
+            payload=payload,
+            amount_x_decimals=amount_out_decimals,
+            amount_y_decimals=amount_in_decimals
+        )
+
+    async def send_swap_type_txn(
+            self,
+            account: Account,
+            txn_payload_data: TransactionPayloadData,
+    ) -> ModuleExecutionResult:
+        """
+        Sends swap type transaction, if reverse action is enabled in task, sends reverse swap type transaction
+        :param account:
+        :param txn_payload_data:
+        :return:
+        """
+
+        out_decimals = txn_payload_data.amount_x_decimals
+        in_decimals = txn_payload_data.amount_y_decimals
+
+        logger.warning(
+            '{} ({}) -> {} ({}).', out_decimals, self.coin_x.symbol.upper(), in_decimals, self.coin_y.symbol.upper()
+        )
+
+        txn_status = await self.simulate_and_send_transfer_type_transaction(
+            account=account,
+            txn_payload=txn_payload_data.payload,
+            txn_info_message=""
+        )
+
+        return txn_status
+
+    async def send_txn(self) -> ModuleExecutionResult:
+        txn_payload_data = await self.build_transaction_payload()
+
+        if txn_payload_data is None:
+            self.module_execution_result.execution_status = enums.ModuleExecutionStatus.ERROR
+            self.module_execution_result.execution_info = "Error while building transaction payload"
+            return self.module_execution_result
+
+        txn_status = await self.send_swap_type_txn(
+            self.account,
+            txn_payload_data,
+        )
+        logger.success('txn_status', txn_status)
+        ex_status = txn_status.execution_status
+
+        if ex_status != enums.ModuleExecutionStatus.SUCCESS and ex_status != enums.ModuleExecutionStatus.SENT:
+            return txn_status

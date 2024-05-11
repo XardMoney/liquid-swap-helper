@@ -1,12 +1,13 @@
+import asyncio
 import random
 
 from aptos_sdk.account import Account
 from loguru import logger
 
-from contracts.base import TokenBase
+from core.contracts import TokenBase
 from core.config import TOKENS_INFO
 from modules.liquidswap.swap import LiquidSwapSwap
-from settings import TOKENS_SWAP_INPUT, TOKENS_SWAP_OUTPUT
+from settings import TOKENS_SWAP_INPUT, TOKENS_SWAP_OUTPUT, REVERSE_SWAP, SLEEP_RANGE_BETWEEN_REVERSE_SWAP
 
 
 class LiquidSwapModule:
@@ -26,23 +27,26 @@ class LiquidSwapModule:
 
         module = LiquidSwapSwap(self.account, coin_x, coin_y, proxies=self.proxies)
         await module.async_init()
-        logger.success('coin_x: {} initial balance: {}', coin_x.symbol, module.initial_balance_x_wei)
 
-        # min_amount_out = module.initial_balance_x_wei * config.MIN_SWAP_PERCENT_BALANCE
-        # max_amount_out = module.initial_balance_x_wei * config.MAX_SWAP_PERCENT_BALANCE
-        # amount_out = round(random.uniform(min_amount_out, max_amount_out))
-        # logger.info('amount_out {}', amount_out)
-        #
-        # amount_in = await module.get_most_profitable_amount_in_and_set_pool_type(
-        #     amount_out,
-        #     coin_x.contract_address,
-        #     coin_y.contract_address,
-        #     module.token_x_decimals,
-        #     module.token_y_decimals,
-        # )
-        # logger.success(
-        #     'amount_in: {}, selected pool: {}, router_address: {}', amount_in, module.pool_type, module.router_address
-        # )
+        send_txn = await module.send_txn()
+        logger.success('send_txn: {}', send_txn)
+        if not send_txn:
+            return False
+
+        if REVERSE_SWAP:
+            sleep_time = random.randint(*SLEEP_RANGE_BETWEEN_REVERSE_SWAP)
+            logger.info('sleep: {} second', sleep_time)
+            await asyncio.sleep(sleep_time)
+
+            reverse_module = LiquidSwapSwap(self.account, coin_y, coin_x, proxies=self.proxies)
+            await reverse_module.async_init()
+
+            send_txn = await reverse_module.send_txn()
+            logger.success('send_txn: {}', send_txn)
+            if not send_txn:
+                return False
+
+        return True
 
 
 if __name__ == '__main__':
