@@ -13,8 +13,11 @@ from core.contracts import TokenBase
 from core import enums
 from core.client import AptosCustomRestClient
 from core.config import RPC_URLS
-from core.models import TransactionSimulationResult, ModuleExecutionResult, TransactionReceipt
-from settings import GAS_LIMIT
+from core.models import TransactionSimulationResult, TransactionReceipt
+from modules.liquidswap.exceptions import (
+    TransactionSimulationError, TransactionSubmitError, TransactionFailedError, TransactionTimeoutError
+)
+from settings import GAS_MULTIPLIER
 
 
 class ModuleBase:
@@ -33,7 +36,6 @@ class ModuleBase:
 
         self.coin_x = coin_x
         self.coin_y = coin_y
-        self.module_execution_result = ModuleExecutionResult()
 
     async def async_init(self):
         self.initial_balance_x_wei = await self.get_wallet_token_balance(
@@ -79,7 +81,6 @@ class ModuleBase:
                 wallet_address,
                 f"0x1::coin::CoinStore<{token_address}>",
             )
-            logger.debug(balance)
             return int(balance["data"]["coin"]["value"])
 
         except Exception as e:
@@ -207,7 +208,6 @@ class ModuleBase:
                 wallet_address,
                 f'0x1::coin::CoinStore<{token_contract}>'
             )
-            logger.debug('is_registered data: {}', is_registered)
             return True
 
         except Exception as ex:
@@ -218,7 +218,7 @@ class ModuleBase:
             self,
             sender_account: Account,
             token_obj: TokenBase,
-    ) -> ModuleExecutionResult:
+    ) -> str | None:
         """
         Sends coin register transaction
         :param sender_account:
@@ -233,13 +233,13 @@ class ModuleBase:
         )
         txn_info_message = f"Coin register {token_obj.symbol.upper()} for wallet"
 
-        txn_status = await self.simulate_and_send_transfer_type_transaction(
+        txn_hash = await self.simulate_and_send_transfer_type_transaction(
             account=sender_account,
             txn_payload=payload,
             txn_info_message=txn_info_message
         )
 
-        return txn_status
+        return txn_hash
 
     async def build_raw_transaction(
             self,
@@ -320,7 +320,6 @@ class ModuleBase:
             gas_limit=gas_limit,
             gas_price=gas_price
         )
-        # ClientConfig.max_gas_amount = int(gas_limit)
 
         simulation_result = await self.estimate_transaction(
             raw_transaction=raw_transaction,
@@ -345,12 +344,27 @@ class ModuleBase:
         random_amount = random.uniform(min_amount, max_amount)
         return int(random_amount * 10 ** decimals)
 
+    @staticmethod
+    def check_txn_receipt(txn_receipt, tx_hash) -> str | None:
+        if txn_receipt.status == enums.TransactionStatus.SUCCESS:
+            msg = f"Transaction success, vm status: {txn_receipt.vm_status}. Txn Hash: {tx_hash}"
+            logger.success(msg)
+            return tx_hash
+
+        elif txn_receipt.status == enums.TransactionStatus.FAILED:
+            msg = f"Transaction failed, vm status: {txn_receipt.vm_status}. Txn Hash: {tx_hash}"
+            raise TransactionFailedError(msg)
+
+        elif txn_receipt.status == enums.TransactionStatus.TIME_OUT:
+            msg = f"Transaction timeout, vm status: {txn_receipt.vm_status}. Txn Hash: {tx_hash}"
+            raise TransactionTimeoutError(msg)
+
     async def simulate_and_send_transfer_type_transaction(
             self,
             account: Account,
             txn_payload: EntryFunction,
             txn_info_message: str
-    ) -> ModuleExecutionResult:
+    ) -> str | None:
         """
         Simulates and sends transfer type transaction
         :param account:
@@ -364,21 +378,20 @@ class ModuleBase:
         simulation_status = await self.prebuild_payload_and_estimate_transaction(
             account=account,
             txn_payload=txn_payload,
-            gas_limit=int(random.randint(*GAS_LIMIT)),
+            gas_limit=self.client.client_config.max_gas_amount,
             gas_price=self.client.client_config.gas_unit_price
         )
 
         if simulation_status.result == enums.TransactionStatus.FAILED:
             err_msg = f"Transaction simulation failed. Status: {simulation_status.vm_status}"
-            logger.error(err_msg)
-            return self.module_execution_result
+            raise TransactionSimulationError(err_msg)
 
-        logger.success(f"Transaction simulation success. Gas used: {simulation_status.gas_used}")
+        logger.success(f"Transaction simulation success. {txn_info_message} Gas used: {simulation_status.gas_used}")
 
         if int(simulation_status.gas_used) <= 200:
             gas_limit = int(int(simulation_status.gas_used) * 2)
         else:
-            gas_limit = int(int(simulation_status.gas_used) * 1.15)
+            gas_limit = int(int(simulation_status.gas_used) * GAS_MULTIPLIER)
 
         self.client.client_config.max_gas_amount = gas_limit
 
@@ -389,10 +402,7 @@ class ModuleBase:
         tx_hash = await self.submit_bcs_transaction(signed_transaction=signed_transaction)
         if tx_hash is None:
             err_msg = f"Transaction submission failed"
-            logger.error(err_msg)
-            self.module_execution_result.execution_status = enums.ModuleExecutionStatus.FAILED.value
-            self.module_execution_result.execution_info = err_msg
-            return self.module_execution_result
+            raise TransactionSubmitError(err_msg)
 
         logger.info(
             f"Txn sent. Waiting for receipt (Timeout in {self.client.client_config.transaction_wait_in_seconds}s)."
@@ -400,26 +410,4 @@ class ModuleBase:
         )
         txn_receipt = await self.wait_for_receipt(tx_hash)
 
-        if txn_receipt.status == enums.TransactionStatus.SUCCESS:
-            msg = f"Transaction success, vm status: {txn_receipt.vm_status}. Txn Hash: {tx_hash}"
-            logger.success(msg)
-            self.module_execution_result.execution_status = enums.ModuleExecutionStatus.SUCCESS.value
-            self.module_execution_result.execution_info = msg
-            self.module_execution_result.hash = tx_hash
-            return self.module_execution_result
-
-        elif txn_receipt.status == enums.TransactionStatus.FAILED:
-            msg = f"Transaction failed, vm status: {txn_receipt.vm_status}. Txn Hash: {tx_hash}"
-            logger.error(msg)
-            self.module_execution_result.execution_status = enums.ModuleExecutionStatus.FAILED.value
-            self.module_execution_result.execution_info = msg
-            self.module_execution_result.hash = tx_hash
-
-        elif txn_receipt.status == enums.TransactionStatus.TIME_OUT:
-            msg = f"Transaction timeout, vm status: {txn_receipt.vm_status}. Txn Hash: {tx_hash}"
-            logger.error(msg)
-            self.module_execution_result.execution_status = enums.ModuleExecutionStatus.TIME_OUT.value
-            self.module_execution_result.execution_info = msg
-            self.module_execution_result.hash = tx_hash
-
-        return self.module_execution_result
+        return self.check_txn_receipt(txn_receipt, tx_hash)

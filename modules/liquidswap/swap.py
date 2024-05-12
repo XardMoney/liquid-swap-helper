@@ -10,11 +10,14 @@ from aptos_sdk.type_tag import TypeTag, StructTag
 from loguru import logger
 
 import settings
-from core import enums
 from core.base import ModuleBase
+from core.config import NUMBER_OF_RETRIES
 from core.contracts import TokenBase
-from core.models import TransactionPayloadData, ModuleExecutionResult
+from core.enums import ModuleExecutionStatus
+from core.models import TransactionPayloadData
 from modules.liquidswap.config import POOLS_INFO
+from modules.liquidswap.decorators import tx_retry
+from modules.liquidswap.exceptions import BuildTransactionError
 from utils.math import get_coins_out_with_fees_stable, d, get_coins_out_with_fees
 
 
@@ -38,6 +41,8 @@ class LiquidSwapSwap(ModuleBase):
         self.router_address = None
         self.resource_data = None
         self.pool_type = None
+        self.pool_version = None
+        self.swap_address = None
 
     async def get_token_pair_reserve(
             self,
@@ -104,7 +109,6 @@ class LiquidSwapSwap(ModuleBase):
             resource_address=resource_address,
             router_address=router_address
         )
-        logger.debug('resource_data: {}', self.resource_data)
         if tokens_reserve is None:
             return None
 
@@ -169,17 +173,21 @@ class LiquidSwapSwap(ModuleBase):
 
         for pool_version, pool_type, task in tasks:
             amount_in = await task
-            logger.debug(f'pool_version: {pool_version} pool_type: {pool_type} amount_in: {amount_in}')
             if amount_in is not None:
                 pool_data[(pool_version, pool_type)] = amount_in
 
-        logger.debug('pool_data: {}', pool_data)
         most_profitable_pool = max(pool_data, key=pool_data.get)
-        logger.debug('most_profitable_pool: {}', most_profitable_pool)
         most_profitable_amount_in = pool_data[most_profitable_pool]
 
-        pool_version, self.pool_type = most_profitable_pool
-        self.router_address = POOLS_INFO[pool_version]['router_address']
+        self.pool_version, self.pool_type = most_profitable_pool
+        self.router_address = POOLS_INFO[self.pool_version]['router_address']
+        self.swap_address = POOLS_INFO[self.pool_version]['swap_address']
+        logger.success(
+            f'Pool version: {self.pool_version}\n'
+            f'Pool type: {self.pool_type}\n'
+            f'Router address: {self.router_address}\n'
+            f'Swap function: {self.swap_address}'
+        )
 
         return most_profitable_amount_in
 
@@ -229,7 +237,7 @@ class LiquidSwapSwap(ModuleBase):
 
         return amount_out_wei
 
-    async def build_transaction_payload(self):
+    async def build_transaction_payload(self) -> TransactionPayloadData | None:
         amount_out_wei = self.calculate_amount_out_from_balance(coin_x=self.coin_x)
         if amount_out_wei is None:
             return None
@@ -245,34 +253,43 @@ class LiquidSwapSwap(ModuleBase):
         if amount_in_wei is None:
             return None
 
-        is_registered = await self.is_token_registered_for_address(
-            self.account.address(),
-            self.coin_y.contract_address
-        )
-        if not is_registered:
-            await self.register_coin_for_wallet(
-                self.account,
-                self.coin_y
-            )
-
         amount_out_decimals = amount_out_wei / 10 ** self.token_x_decimals
         amount_in_decimals = amount_in_wei / 10 ** self.token_y_decimals
 
-        transaction_args = [
-            TransactionArgument(int(amount_out_wei), Serializer.u64),
-            TransactionArgument(int(amount_in_wei), Serializer.u64)
-        ]
-
-        payload = EntryFunction.natural(
-            f"{self.router_address}::scripts_v2",
-            "swap",
-            [
-                TypeTag(StructTag.from_str(self.coin_x.contract_address)),
-                TypeTag(StructTag.from_str(self.coin_y.contract_address)),
-                TypeTag(StructTag.from_str(f"{self.router_address}::curves::{self.pool_type}"))
-            ],
-            transaction_args
-        )
+        match self.pool_version:
+            case "v0":
+                payload = EntryFunction.natural(
+                    f"{self.swap_address}::scripts_v2",
+                    "swap",
+                    [
+                        TypeTag(StructTag.from_str(self.coin_x.contract_address)),
+                        TypeTag(StructTag.from_str(self.coin_y.contract_address)),
+                        TypeTag(StructTag.from_str(f"{self.router_address}::curves::{self.pool_type}"))
+                    ],
+                    [
+                        TransactionArgument(int(amount_out_wei), Serializer.u64),
+                        TransactionArgument(int(amount_in_wei), Serializer.u64)
+                    ]
+                )
+            case "v0.5":
+                payload = {
+                    "function": f"{self.swap_address}::router::swap_coin_for_coin_x1",
+                    "type_arguments": [
+                        self.coin_x.contract_address,
+                        self.coin_y.contract_address,
+                        f"{self.router_address}::curves::{self.pool_type}"
+                    ],
+                    "arguments": [
+                        str(amount_out_wei),
+                        [
+                            str(amount_in_wei)
+                        ],
+                        "0x05"
+                    ],
+                    "type": "entry_function_payload"
+                }
+            case _:
+                return None
 
         return TransactionPayloadData(
             payload=payload,
@@ -284,13 +301,24 @@ class LiquidSwapSwap(ModuleBase):
             self,
             account: Account,
             txn_payload_data: TransactionPayloadData,
-    ) -> ModuleExecutionResult:
+    ) -> str | None:
         """
         Sends swap type transaction, if reverse action is enabled in task, sends reverse swap type transaction
         :param account:
         :param txn_payload_data:
         :return:
         """
+
+        is_registered = await self.is_token_registered_for_address(
+            self.account.address(),
+            self.coin_y.contract_address
+        )
+        if not is_registered:
+            txn_hash = await self.register_coin_for_wallet(
+                self.account,
+                self.coin_y
+            )
+            logger.success('Register coin successfully! txn hash: {}', txn_hash)
 
         out_decimals = txn_payload_data.amount_x_decimals
         in_decimals = txn_payload_data.amount_y_decimals
@@ -299,28 +327,30 @@ class LiquidSwapSwap(ModuleBase):
             '{} ({}) -> {} ({}).', out_decimals, self.coin_x.symbol.upper(), in_decimals, self.coin_y.symbol.upper()
         )
 
-        txn_status = await self.simulate_and_send_transfer_type_transaction(
-            account=account,
-            txn_payload=txn_payload_data.payload,
-            txn_info_message=""
-        )
+        if isinstance(txn_payload_data.payload, EntryFunction):
+            txn_hash = await self.simulate_and_send_transfer_type_transaction(
+                account=account,
+                txn_payload=txn_payload_data.payload,
+                txn_info_message=""
+            )
+            return txn_hash
 
-        return txn_status
+        elif isinstance(txn_payload_data.payload, dict):
+            tx_hash = await self.client.submit_transaction(self.account, txn_payload_data.payload)
+            txn_receipt = await self.wait_for_receipt(tx_hash)
+            return self.check_txn_receipt(txn_receipt, tx_hash)
 
-    async def send_txn(self) -> ModuleExecutionResult:
+    @tx_retry(attempts=NUMBER_OF_RETRIES)
+    async def send_txn(self) -> str | None:
         txn_payload_data = await self.build_transaction_payload()
 
         if txn_payload_data is None:
-            self.module_execution_result.execution_status = enums.ModuleExecutionStatus.ERROR
-            self.module_execution_result.execution_info = "Error while building transaction payload"
-            return self.module_execution_result
+            msg = "Error while building transaction payload"
+            raise BuildTransactionError(msg)
 
-        txn_status = await self.send_swap_type_txn(
+        txn_hash = await self.send_swap_type_txn(
             self.account,
             txn_payload_data,
         )
-        logger.success('txn_status', txn_status)
-        ex_status = txn_status.execution_status
 
-        if ex_status != enums.ModuleExecutionStatus.SUCCESS and ex_status != enums.ModuleExecutionStatus.SENT:
-            return txn_status
+        return txn_hash

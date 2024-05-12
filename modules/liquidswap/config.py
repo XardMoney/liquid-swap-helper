@@ -10,6 +10,9 @@ POOLS_INFO = {
         'router_address': AccountAddress.from_str(
             '0x190d44266241744264b964a37b8f09863167a12d3e70cda39376cfb4e3561e12'
         ),
+        'swap_address': AccountAddress.from_str(
+            '0x190d44266241744264b964a37b8f09863167a12d3e70cda39376cfb4e3561e12'
+        ),
         'types': ['Uncorrelated', 'Stable']
     },
     'v0.5': {
@@ -18,6 +21,9 @@ POOLS_INFO = {
         ),
         'router_address': AccountAddress.from_str(
             '0x0163df34fccbf003ce219d3f1d9e70d140b60622cb9dd47599c25fb2f797ba6e'
+        ),
+        'swap_address': (
+            '0x99465840349525b3d648e609eacb056d5b61e3915e8a3972b431afc26e3f05a1'
         ),
         'types': ['Uncorrelated', 'Stable']
     }

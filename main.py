@@ -1,13 +1,16 @@
 from aptos_sdk.account import Account
-from core.config import SLEEP_RANGE_BETWEEN_ACCOUNTS, TOKENS_INFO
-from modules.liquidswap.main import LiquidSwapModule
-from utils.file import append_line, clear_file, read_lines
-from settings import USE_PROXY, SHUFFLE_ACCOUNTS, STRICT_PROXY, SEMAPHORE_LIMIT, AMOUNT_PERCENT, AMOUNT_QUANTITY, \
+from core.config import TOKENS_INFO
+from utils.file import clear_file, read_lines
+from settings import (
+    USE_PROXY, SHUFFLE_ACCOUNTS, STRICT_PROXY, SEMAPHORE_LIMIT, AMOUNT_PERCENT, AMOUNT_QUANTITY,
     TOKENS_SWAP_OUTPUT, TOKENS_SWAP_INPUT
+)
 from itertools import cycle
 from utils.log import log
 import asyncio
 import random
+
+from worker import Worker
 
 
 def check_settings():
@@ -26,26 +29,6 @@ def check_settings():
             return False
 
     return True
-
-
-class Worker:
-    def __init__(self, semaphore, module: LiquidSwapModule):
-        self.semaphore = semaphore
-        self.module = module
-
-    async def start_work(self, sleep_needed):
-        async with self.semaphore:
-            if sleep_needed:
-                await asyncio.sleep(random.randint(*SLEEP_RANGE_BETWEEN_ACCOUNTS))
-
-            result = await self.module.swap()
-
-            if result:
-                await append_line(str(self.module.account.private_key), "files/succeeded_wallets.txt")
-                return True
-
-            await append_line(str(self.module.account.private_key), "files/failed_wallets.txt")
-            return False
 
 
 async def main():
@@ -74,11 +57,7 @@ async def main():
     tasks = []
     for i, (proxy, private_key) in enumerate(accounts):
         account = Account.load_key(private_key)
-        module = LiquidSwapModule(account, proxies={
-            'http://': proxy,
-            'https://': proxy
-        })
-        worker = Worker(semaphore, module)
+        worker = Worker(semaphore, account, proxy)
         tasks.append(
             asyncio.create_task(
                 worker.start_work(False if i < SEMAPHORE_LIMIT else True)

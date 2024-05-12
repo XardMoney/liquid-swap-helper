@@ -11,19 +11,12 @@ class TransactionSimulationResult(BaseModel):
 
 
 class TransactionPayloadData(BaseModel):
-    payload: EntryFunction
+    payload: EntryFunction | dict
     amount_x_decimals: float
     amount_y_decimals: float
 
     class Config:
         arbitrary_types_allowed = True
-
-
-class ModuleExecutionResult(BaseModel):
-    execution_status: enums.ModuleExecutionStatus = enums.ModuleExecutionStatus.FAILED
-    retry_needed: bool = True
-    execution_info: str | None = None
-    hash: str | None = None
 
 
 class TransactionReceipt(BaseModel):
