@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DEBUG_MODE = os.getenv("DEBUG_MODE", '1') in ['1', 'true']
+DEBUG_MODE = 0
 
 SHUFFLE_ACCOUNTS = True
 
@@ -17,17 +17,25 @@ SEMAPHORE_LIMIT = 1
 # Limit of retries for all the actions
 NUMBER_OF_RETRIES = 5
 
-SLEEP_RANGE_BETWEEN_ACCOUNTS = [150, 250]
+SLEEP_RANGE_BETWEEN_ACCOUNTS = [150, 250]  # [0, 10000]
 
 # Swap settings
-TOKENS_SWAP_INPUT = ["APT"]
-TOKENS_SWAP_OUTPUT = ["stAPTDitto", "stAPTAmnis"]
-MIN_BALANCE = 0.1
-AMOUNT_PERCENT = ()
-AMOUNT_QUANTITY = (0.15, 6)
+TOKENS_SWAP_INPUT = ["APT"]  # "APT", "stAPTDitto", "stAPTAmnis"
+TOKENS_SWAP_OUTPUT = ["stAPTDitto", "stAPTAmnis"]  # "APT", "stAPTDitto", "stAPTAmnis"
+MIN_BALANCE = 0.1  # 0.1 - 1000
+AMOUNT_PERCENT = (10, 30)  # (1, 100)
+AMOUNT_QUANTITY = (0.15, 0.5)  # (0.1, 5)
 
-SLEEP_RANGE_BETWEEN_REVERSE_SWAP = [150, 250]
-REVERSE_SWAP = True
+SLEEP_RANGE_BETWEEN_REVERSE_SWAP = [150, 250]  # [0, 10000]
+REVERSE_SWAP = True  # True/False
 
-GAS_LIMIT = [4200, 4700]
-GAS_PRICE = 1
+GAS_MULTIPLIER = 1.15  # 1.01 - 2
+
+# TODO пример определения модулей для дальнейшего улучшения
+MODULES = {
+    'liquid_swap': [
+        'swap',  # Swap только в одну сторону
+        'full_swap',  # Swap c возвратом в исходный токен
+        'reverse_swap'  # Swap из монет в TOKENS_SWAP_OUTPUT в нативный токен
+    ]
+}
