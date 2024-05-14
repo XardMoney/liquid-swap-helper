@@ -28,14 +28,19 @@ AMOUNT_QUANTITY = (0.15, 0.5)  # (0.1, 5)
 
 SLEEP_RANGE_BETWEEN_REVERSE_SWAP = [150, 250]  # [0, 10000]
 REVERSE_SWAP = True  # True/False
+SWAPS_LIMIT_RANGE = [2, 10]  # [1, 5]
 
 GAS_MULTIPLIER = 1.15  # 1.01 - 2
 
+
+# MODULES = ['liquid_swap.swap, liquid_swap.full_swap, liquid_swap.reverse_swap']
+MODULES = ['liquid_swap.full_swap']
+
 # TODO пример определения модулей для дальнейшего улучшения
-MODULES = {
-    'liquid_swap': [
-        'swap',  # Swap только в одну сторону
-        'full_swap',  # Swap c возвратом в исходный токен
-        'reverse_swap'  # Swap из монет в TOKENS_SWAP_OUTPUT в нативный токен
-    ]
-}
+# MODULES = {
+#     'liquid_swap': [
+#         'swap',  # Swap только в одну сторону
+#         'full_swap',  # Swap c возвратом в исходный токен
+#         'reverse_swap'  # Swap из монет в TOKENS_SWAP_OUTPUT в нативный токен
+#     ]
+# }

@@ -13,12 +13,11 @@ import settings
 from core.base import ModuleBase
 from core.config import NUMBER_OF_RETRIES
 from core.contracts import TokenBase
-from core.enums import ModuleExecutionStatus
 from core.models import TransactionPayloadData
 from modules.liquidswap.config import POOLS_INFO
 from modules.liquidswap.decorators import tx_retry
 from modules.liquidswap.exceptions import BuildTransactionError
-from utils.math import get_coins_out_with_fees_stable, d, get_coins_out_with_fees
+from modules.liquidswap.math import get_coins_out_with_fees_stable, d, get_coins_out_with_fees
 
 
 class LiquidSwapSwap(ModuleBase):
@@ -206,6 +205,10 @@ class LiquidSwapSwap(ModuleBase):
             logger.error(f"Wallet {coin_x.symbol.upper()} balance = 0")
             return None
 
+        if self.initial_balance_x_wei is None:
+            logger.error(f"Error while getting initial balance of {self.coin_x.symbol.upper()}")
+            return None
+
         if initial_balance_x_decimals < settings.MIN_BALANCE:
             logger.error(
                 f"Wallet {coin_x.symbol.upper()} balance less than min balance, "
@@ -237,24 +240,17 @@ class LiquidSwapSwap(ModuleBase):
 
         return amount_out_wei
 
-    async def build_transaction_payload(self) -> TransactionPayloadData | None:
-        amount_out_wei = self.calculate_amount_out_from_balance(coin_x=self.coin_x)
-        if amount_out_wei is None:
-            return None
-
-        amount_in_wei = await self.get_most_profitable_amount_in_and_set_pool_type(
-            amount_out=amount_out_wei,
-            coin_x_address=self.coin_x.contract_address,
-            coin_y_address=self.coin_y.contract_address,
-            coin_x_decimals=self.token_x_decimals,
-            coin_y_decimals=self.token_y_decimals
-        )
-
-        if amount_in_wei is None:
-            return None
-
-        amount_out_decimals = amount_out_wei / 10 ** self.token_x_decimals
-        amount_in_decimals = amount_in_wei / 10 ** self.token_y_decimals
+    def _prepare_transaction_payload_data(
+            self,
+            amount_out_wei: int,
+            amount_in_wei: int,
+            token_out: TokenBase,
+            token_in: TokenBase,
+            token_out_decimals: int,
+            token_in_decimals: int,
+    ) -> TransactionPayloadData | None:
+        amount_out_decimals = amount_out_wei / 10 ** token_out_decimals
+        amount_in_decimals = amount_in_wei / 10 ** token_in_decimals
 
         match self.pool_version:
             case "v0":
@@ -262,8 +258,8 @@ class LiquidSwapSwap(ModuleBase):
                     f"{self.swap_address}::scripts_v2",
                     "swap",
                     [
-                        TypeTag(StructTag.from_str(self.coin_x.contract_address)),
-                        TypeTag(StructTag.from_str(self.coin_y.contract_address)),
+                        TypeTag(StructTag.from_str(token_out.contract_address)),
+                        TypeTag(StructTag.from_str(token_in.contract_address)),
                         TypeTag(StructTag.from_str(f"{self.router_address}::curves::{self.pool_type}"))
                     ],
                     [
@@ -275,8 +271,8 @@ class LiquidSwapSwap(ModuleBase):
                 payload = {
                     "function": f"{self.swap_address}::router::swap_coin_for_coin_x1",
                     "type_arguments": [
-                        self.coin_x.contract_address,
-                        self.coin_y.contract_address,
+                        token_out.contract_address,
+                        token_in.contract_address,
                         f"{self.router_address}::curves::{self.pool_type}"
                     ],
                     "arguments": [
@@ -293,8 +289,73 @@ class LiquidSwapSwap(ModuleBase):
 
         return TransactionPayloadData(
             payload=payload,
-            amount_x_decimals=amount_out_decimals,
-            amount_y_decimals=amount_in_decimals
+            amount_out_decimals=amount_out_decimals,
+            amount_in_decimals=amount_in_decimals,
+            token_out=token_out,
+            token_in=token_in
+        )
+
+    async def build_transaction_payload(self) -> TransactionPayloadData | None:
+        amount_out_wei = self.calculate_amount_out_from_balance(coin_x=self.coin_x)
+        if amount_out_wei is None:
+            return None
+
+        amount_in_wei = await self.get_most_profitable_amount_in_and_set_pool_type(
+            amount_out=amount_out_wei,
+            coin_x_address=self.coin_x.contract_address,
+            coin_y_address=self.coin_y.contract_address,
+            coin_x_decimals=self.token_x_decimals,
+            coin_y_decimals=self.token_y_decimals
+        )
+
+        if amount_in_wei is None:
+            return None
+
+        return self._prepare_transaction_payload_data(
+            amount_out_wei,
+            amount_in_wei,
+            self.coin_x,
+            self.coin_y,
+            self.token_x_decimals,
+            self.token_y_decimals
+        )
+
+    async def build_reverse_transaction_payload(self) -> TransactionPayloadData | None:
+        wallet_y_balance_wei = await self.get_wallet_token_balance(
+            wallet_address=self.account.address(),
+            token_address=self.coin_y.contract_address
+        )
+
+        if wallet_y_balance_wei == 0:
+            logger.error(f"Wallet {self.coin_y.symbol.upper()} balance = 0")
+            return None
+
+        if self.initial_balance_y_wei is None:
+            logger.error(f"Error while getting initial balance of {self.coin_y.symbol.upper()}")
+            return None
+
+        amount_out_y_wei = wallet_y_balance_wei - self.initial_balance_y_wei
+        if amount_out_y_wei <= 0:
+            logger.error(f"Wallet {self.coin_y.symbol.upper()} balance less than initial balance")
+            return None
+
+        amount_in_x_wei = await self.get_most_profitable_amount_in_and_set_pool_type(
+            amount_out=amount_out_y_wei,
+            coin_x_address=self.coin_y.contract_address,
+            coin_y_address=self.coin_x.contract_address,
+            coin_x_decimals=self.token_y_decimals,
+            coin_y_decimals=self.token_x_decimals
+        )
+        if amount_in_x_wei is None:
+            return None
+
+        return self._prepare_transaction_payload_data(
+            amount_out_y_wei,
+            amount_in_x_wei,
+            self.coin_y,
+            self.coin_x,
+            self.token_y_decimals,
+            self.token_x_decimals
         )
 
     async def send_swap_type_txn(
@@ -320,11 +381,13 @@ class LiquidSwapSwap(ModuleBase):
             )
             logger.success('Register coin successfully! txn hash: {}', txn_hash)
 
-        out_decimals = txn_payload_data.amount_x_decimals
-        in_decimals = txn_payload_data.amount_y_decimals
+        out_decimals = txn_payload_data.amount_out_decimals
+        in_decimals = txn_payload_data.amount_in_decimals
+        token_out = txn_payload_data.token_out
+        token_in = txn_payload_data.token_in
 
         logger.warning(
-            '{} ({}) -> {} ({}).', out_decimals, self.coin_x.symbol.upper(), in_decimals, self.coin_y.symbol.upper()
+            '{} ({}) -> {} ({}).', out_decimals, token_out.symbol.upper(), in_decimals, token_in.symbol.upper()
         )
 
         if isinstance(txn_payload_data.payload, EntryFunction):
@@ -341,8 +404,11 @@ class LiquidSwapSwap(ModuleBase):
             return self.check_txn_receipt(txn_receipt, tx_hash)
 
     @tx_retry(attempts=NUMBER_OF_RETRIES)
-    async def send_txn(self) -> str | None:
-        txn_payload_data = await self.build_transaction_payload()
+    async def send_txn(self, is_reverse: bool = False) -> str | None:
+        if is_reverse:
+            txn_payload_data = await self.build_reverse_transaction_payload()
+        else:
+            txn_payload_data = await self.build_transaction_payload()
 
         if txn_payload_data is None:
             msg = "Error while building transaction payload"
