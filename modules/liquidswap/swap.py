@@ -7,15 +7,14 @@ from aptos_sdk.account_address import AccountAddress
 from aptos_sdk.bcs import Serializer
 from aptos_sdk.transactions import TransactionArgument, EntryFunction
 from aptos_sdk.type_tag import TypeTag, StructTag
-from loguru import logger
 
 import settings
 from core.base import ModuleBase
-from core.config import NUMBER_OF_RETRIES
+from core.config import NUMBER_OF_RETRIES, TOKENS_INFO
 from core.contracts import TokenBase
 from core.models import TransactionPayloadData
 from modules.liquidswap.config import POOLS_INFO
-from modules.liquidswap.decorators import tx_retry
+from modules.liquidswap.decorators import tx_retry, RetryDecorator
 from modules.liquidswap.exceptions import BuildTransactionError
 from modules.liquidswap.math import get_coins_out_with_fees_stable, d, get_coins_out_with_fees
 
@@ -24,14 +23,15 @@ class LiquidSwapSwap(ModuleBase):
     def __init__(
             self,
             account: Account,
-            coin_x: TokenBase,
-            coin_y: TokenBase,
-            proxies: dict = None
+            proxy: str = None
     ):
+        proxies = {
+            'http://': proxy,
+            'https://': proxy
+        } if proxy else None
+
         super().__init__(
             account=account,
-            coin_x=coin_x,
-            coin_y=coin_y,
             proxies=proxies
         )
 
@@ -80,7 +80,7 @@ class LiquidSwapSwap(ModuleBase):
                 payload=res_payload
             )
             if reversed_data is None:
-                logger.error(f"Error getting token pair reserve (reverse), {pool_type} pool")
+                self.logger_msg(f"Error getting token pair reserve (reverse), {pool_type} pool", 'error')
                 return None
 
             self.resource_data = reversed_data
@@ -181,11 +181,12 @@ class LiquidSwapSwap(ModuleBase):
         self.pool_version, self.pool_type = most_profitable_pool
         self.router_address = POOLS_INFO[self.pool_version]['router_address']
         self.swap_address = POOLS_INFO[self.pool_version]['swap_address']
-        logger.success(
+        self.logger_msg(
             f'Pool version: {self.pool_version}\n'
             f'Pool type: {self.pool_type}\n'
             f'Router address: {self.router_address}\n'
-            f'Swap function: {self.swap_address}'
+            f'Swap function: {self.swap_address}',
+            'success'
         )
 
         return most_profitable_amount_in
@@ -202,17 +203,18 @@ class LiquidSwapSwap(ModuleBase):
         initial_balance_x_decimals = self.initial_balance_x_wei / 10 ** self.token_x_decimals
 
         if self.initial_balance_x_wei == 0:
-            logger.error(f"Wallet {coin_x.symbol.upper()} balance = 0")
+            self.logger_msg(f"Wallet {coin_x.symbol.upper()} balance = 0", 'error')
             return None
 
         if self.initial_balance_x_wei is None:
-            logger.error(f"Error while getting initial balance of {self.coin_x.symbol.upper()}")
+            self.logger_msg(f"Error while getting initial balance of {self.coin_x.symbol.upper()}", 'error')
             return None
 
         if initial_balance_x_decimals < settings.MIN_BALANCE:
-            logger.error(
+            self.logger_msg(
                 f"Wallet {coin_x.symbol.upper()} balance less than min balance, "
-                f"balance: {initial_balance_x_decimals}, min balance: {settings.MIN_BALANCE}"
+                f"balance: {initial_balance_x_decimals}, min balance: {settings.MIN_BALANCE}",
+                'error'
             )
             return None
 
@@ -224,9 +226,10 @@ class LiquidSwapSwap(ModuleBase):
             min_amount_out, max_amount_out = settings.AMOUNT_QUANTITY
 
             if initial_balance_x_decimals < min_amount_out:
-                logger.error(
+                self.logger_msg(
                     f"Wallet {coin_x.symbol.upper()} balance less than min amount out, "
-                    f"balance: {initial_balance_x_decimals}, min amount out: {min_amount_out}"
+                    f"balance: {initial_balance_x_decimals}, min amount out: {min_amount_out}",
+                    'error'
                 )
                 return None
 
@@ -235,7 +238,7 @@ class LiquidSwapSwap(ModuleBase):
 
             amount_out_wei = self.get_random_amount_out_of_token(min_amount_out, max_amount_out, self.token_x_decimals)
         else:
-            logger.error('AMOUNT_PERCENT and AMOUNT_QUANTITY is empty value!')
+            self.logger_msg('AMOUNT_PERCENT and AMOUNT_QUANTITY is empty value!', 'error')
             return None
 
         return amount_out_wei
@@ -327,16 +330,16 @@ class LiquidSwapSwap(ModuleBase):
         )
 
         if wallet_y_balance_wei == 0:
-            logger.error(f"Wallet {self.coin_y.symbol.upper()} balance = 0")
+            self.logger_msg(f"Wallet {self.coin_y.symbol.upper()} balance = 0", 'error')
             return None
 
         if self.initial_balance_y_wei is None:
-            logger.error(f"Error while getting initial balance of {self.coin_y.symbol.upper()}")
+            self.logger_msg(f"Error while getting initial balance of {self.coin_y.symbol.upper()}", 'error')
             return None
 
         amount_out_y_wei = wallet_y_balance_wei - self.initial_balance_y_wei
         if amount_out_y_wei <= 0:
-            logger.error(f"Wallet {self.coin_y.symbol.upper()} balance less than initial balance")
+            self.logger_msg(f"Wallet {self.coin_y.symbol.upper()} balance less than initial balance", 'error')
             return None
 
         amount_in_x_wei = await self.get_most_profitable_amount_in_and_set_pool_type(
@@ -379,15 +382,16 @@ class LiquidSwapSwap(ModuleBase):
                 self.account,
                 self.coin_y
             )
-            logger.success('Register coin successfully! txn hash: {}', txn_hash)
+            self.logger_msg(f'Register coin successfully! txn hash: {txn_hash}', 'success')
 
         out_decimals = txn_payload_data.amount_out_decimals
         in_decimals = txn_payload_data.amount_in_decimals
         token_out = txn_payload_data.token_out
         token_in = txn_payload_data.token_in
 
-        logger.warning(
-            '{} ({}) -> {} ({}).', out_decimals, token_out.symbol.upper(), in_decimals, token_in.symbol.upper()
+        self.logger_msg(
+            f'{out_decimals} ({token_out.symbol.upper()}) -> {in_decimals} ({token_in.symbol.upper()}).',
+            'warning'
         )
 
         if isinstance(txn_payload_data.payload, EntryFunction):
@@ -403,7 +407,8 @@ class LiquidSwapSwap(ModuleBase):
             txn_receipt = await self.wait_for_receipt(tx_hash)
             return self.check_txn_receipt(txn_receipt, tx_hash)
 
-    @tx_retry(attempts=NUMBER_OF_RETRIES)
+    # @tx_retry(attempts=NUMBER_OF_RETRIES)
+    @RetryDecorator(attempts=NUMBER_OF_RETRIES)
     async def send_txn(self, is_reverse: bool = False) -> str | None:
         if is_reverse:
             txn_payload_data = await self.build_reverse_transaction_payload()
@@ -420,3 +425,53 @@ class LiquidSwapSwap(ModuleBase):
         )
 
         return txn_hash
+
+    # TODO
+    async def swap(self):
+        pass
+
+    async def full_swap(self):
+        swaps_limit = random.randint(*settings.SWAPS_LIMIT_RANGE)
+        success_count = 0
+        for i in range(1, swaps_limit + 1):
+            # Initial
+            coin_x_symbol = random.choice(settings.TOKENS_SWAP_INPUT)
+            coin_y_symbol = random.choice(settings.TOKENS_SWAP_OUTPUT)
+            self.coin_x = TokenBase(coin_x_symbol, TOKENS_INFO[coin_x_symbol])
+            self.coin_y = TokenBase(coin_y_symbol, TOKENS_INFO[coin_y_symbol])
+            await self.async_init()
+
+            self.logger_msg(
+                f'Start full_swap module. Launch {i} of {swaps_limit}. Token out: {coin_x_symbol}. '
+                f'Token in: {coin_y_symbol}',
+                'success'
+            )
+
+            # Execute
+            txn_hash = await self.send_txn()
+            if not txn_hash:
+                continue
+            self.logger_msg(f'Swap successfully! txn hash: {txn_hash}', 'success')
+
+            if settings.REVERSE_SWAP:
+                sleep_time = random.randint(*settings.SLEEP_RANGE_BETWEEN_REVERSE_SWAP)
+                self.logger_msg(f'sleeping before reverse swap: {sleep_time} second')
+                await asyncio.sleep(sleep_time)
+
+                txn_hash = await self.send_txn(is_reverse=True)
+                if not txn_hash:
+                    continue
+                self.logger_msg(f'Reverse swap successfully! txn hash: {txn_hash}', 'success')
+                sleep_time = random.randint(*settings.SLEEP_RANGE_BETWEEN_REVERSE_SWAP)
+                self.logger_msg(f'sleeping after reverse swap: {sleep_time} second')
+            success_count += 1
+
+        self.logger_msg(f'Stop full_swap module. Success count: {success_count}', 'success')
+        if success_count == 0:
+            return False
+
+        return True
+
+    # TODO
+    async def reverse_swap(self):
+        pass

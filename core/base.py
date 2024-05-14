@@ -7,7 +7,6 @@ from aptos_sdk.account_address import AccountAddress
 from aptos_sdk.async_client import ApiError
 from aptos_sdk.transactions import RawTransaction, TransactionPayload, EntryFunction
 from aptos_sdk.type_tag import TypeTag, StructTag
-from loguru import logger
 
 from core.contracts import TokenBase
 from core import enums
@@ -18,24 +17,24 @@ from modules.liquidswap.exceptions import (
     TransactionSimulationError, TransactionSubmitError, TransactionFailedError, TransactionTimeoutError
 )
 from settings import GAS_MULTIPLIER
+from utils.log import Logger
 
 
-class ModuleBase:
+class ModuleBase(Logger):
     def __init__(
             self,
-            coin_x: TokenBase,
-            coin_y: TokenBase,
             account: Account,
             base_url: str = random.choice(RPC_URLS),
             proxies: dict = None
     ):
+        Logger.__init__(self, account_address=account.account_address)
 
         self.base_url = base_url
         self.client = AptosCustomRestClient(base_url=base_url, proxies=proxies)
         self.account = account
 
-        self.coin_x = coin_x
-        self.coin_y = coin_y
+        self.coin_x: TokenBase | None = None
+        self.coin_y: TokenBase | None = None
 
     async def async_init(self):
         self.initial_balance_x_wei = await self.get_wallet_token_balance(
@@ -84,7 +83,7 @@ class ModuleBase:
             return int(balance["data"]["coin"]["value"])
 
         except Exception as e:
-            logger.error(e)
+            self.logger_msg(str(e), 'error')
             return 0
 
     async def get_token_reserve(
@@ -106,7 +105,7 @@ class ModuleBase:
             return data
 
         except Exception as e:
-            logger.error(e)
+            self.logger_msg(str(e), 'error')
             return None
 
     async def get_token_info(self, token_obj: TokenBase) -> dict | None:
@@ -128,7 +127,7 @@ class ModuleBase:
             return token_info["data"]
 
         except Exception as e:
-            logger.error(f"Error getting token info: {e}")
+            self.logger_msg(f"Error getting token info: {e}", 'error')
             return None
 
     async def submit_bcs_transaction(self, signed_transaction):
@@ -136,7 +135,7 @@ class ModuleBase:
             tx_hash = await self.client.submit_bcs_transaction(signed_transaction)
             return tx_hash
         except ApiError as e:
-            logger.error(f"ApiError: {e}")
+            self.logger_msg(f"ApiError: {e}", 'error')
             return None
 
     async def txn_pending_status(self, txn_hash: str) -> bool:
@@ -211,7 +210,7 @@ class ModuleBase:
             return True
 
         except Exception as ex:
-            logger.error('error: {}', ex)
+            self.logger_msg(f'error: {ex}', 'error')
             return False
 
     async def register_coin_for_wallet(
@@ -344,11 +343,10 @@ class ModuleBase:
         random_amount = random.uniform(min_amount, max_amount)
         return int(random_amount * 10 ** decimals)
 
-    @staticmethod
-    def check_txn_receipt(txn_receipt, tx_hash) -> str | None:
+    def check_txn_receipt(self, txn_receipt, tx_hash) -> str | None:
         if txn_receipt.status == enums.TransactionStatus.SUCCESS:
             msg = f"Transaction success, vm status: {txn_receipt.vm_status}. Txn Hash: {tx_hash}"
-            logger.success(msg)
+            self.logger_msg(msg, 'success')
             return tx_hash
 
         elif txn_receipt.status == enums.TransactionStatus.FAILED:
@@ -373,7 +371,7 @@ class ModuleBase:
         :return:
         """
         if txn_info_message:
-            logger.warning(f"Action: {txn_info_message}")
+            self.logger_msg(f"Action: {txn_info_message}", 'warning')
 
         simulation_status = await self.prebuild_payload_and_estimate_transaction(
             account=account,
@@ -386,7 +384,10 @@ class ModuleBase:
             err_msg = f"Transaction simulation failed. Status: {simulation_status.vm_status}"
             raise TransactionSimulationError(err_msg)
 
-        logger.success(f"Transaction simulation success. {txn_info_message} Gas used: {simulation_status.gas_used}")
+        self.logger_msg(
+            f"Transaction simulation success. {txn_info_message} Gas used: {simulation_status.gas_used}",
+            'success'
+        )
 
         if int(simulation_status.gas_used) <= 200:
             gas_limit = int(int(simulation_status.gas_used) * 2)
@@ -404,9 +405,10 @@ class ModuleBase:
             err_msg = f"Transaction submission failed"
             raise TransactionSubmitError(err_msg)
 
-        logger.info(
+        self.logger_msg(
             f"Txn sent. Waiting for receipt (Timeout in {self.client.client_config.transaction_wait_in_seconds}s)."
-            f" Txn Hash: {tx_hash}"
+            f" Txn Hash: {tx_hash}",
+            'success'
         )
         txn_receipt = await self.wait_for_receipt(tx_hash)
 
