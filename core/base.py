@@ -16,7 +16,7 @@ from core.models import TransactionSimulationResult, TransactionReceipt
 from modules.liquidswap.exceptions import (
     TransactionSimulationError, TransactionSubmitError, TransactionFailedError, TransactionTimeoutError
 )
-from settings import GAS_MULTIPLIER
+from settings import GAS_MULTIPLIER, GAS_LIMIT
 from utils.log import Logger
 
 
@@ -32,6 +32,7 @@ class ModuleBase(Logger):
         self.base_url = base_url
         self.client = AptosCustomRestClient(base_url=base_url, proxies=proxies)
         self.account = account
+        self.client.client_config.max_gas_amount = random.randint(*GAS_LIMIT)
 
         self.coin_x: TokenBase | None = None
         self.coin_y: TokenBase | None = None

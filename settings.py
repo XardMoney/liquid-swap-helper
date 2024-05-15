@@ -32,3 +32,6 @@ REVERSE_SWAP = True  # True/False
 SWAPS_LIMIT_RANGE = [2, 10]  # [1, 5]
 
 GAS_MULTIPLIER = 1.15  # 1.01 - 2
+
+# Gas limit of each transaction, 100000 = 0.1 APT (random selection)
+GAS_LIMIT = [4200, 4700]
