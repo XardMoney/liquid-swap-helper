@@ -14,7 +14,7 @@ from core.config import NUMBER_OF_RETRIES, TOKENS_INFO
 from core.contracts import TokenBase
 from core.models import TransactionPayloadData
 from modules.liquidswap.config import POOLS_INFO
-from modules.liquidswap.decorators import tx_retry, RetryDecorator
+from modules.liquidswap.decorators import tx_retry
 from modules.liquidswap.exceptions import BuildTransactionError
 from modules.liquidswap.math import get_coins_out_with_fees_stable, d, get_coins_out_with_fees
 
@@ -80,7 +80,7 @@ class LiquidSwapSwap(ModuleBase):
                 payload=res_payload
             )
             if reversed_data is None:
-                self.logger_msg(f"Error getting token pair reserve (reverse), {pool_type} pool", 'error')
+                self.logger_msg(f"Error getting token pair reserve (reverse), {pool_type} pool", 'debug')
                 return None
 
             self.resource_data = reversed_data
@@ -186,7 +186,7 @@ class LiquidSwapSwap(ModuleBase):
             f'Pool type: {self.pool_type}\n'
             f'Router address: {self.router_address}\n'
             f'Swap function: {self.swap_address}',
-            'success'
+            'debug'
         )
 
         return most_profitable_amount_in
@@ -407,8 +407,7 @@ class LiquidSwapSwap(ModuleBase):
             txn_receipt = await self.wait_for_receipt(tx_hash)
             return self.check_txn_receipt(txn_receipt, tx_hash)
 
-    # @tx_retry(attempts=NUMBER_OF_RETRIES)
-    @RetryDecorator(attempts=NUMBER_OF_RETRIES)
+    @tx_retry(attempts=NUMBER_OF_RETRIES)
     async def send_txn(self, is_reverse: bool = False) -> str | None:
         if is_reverse:
             txn_payload_data = await self.build_reverse_transaction_payload()
@@ -451,7 +450,6 @@ class LiquidSwapSwap(ModuleBase):
             txn_hash = await self.send_txn()
             if not txn_hash:
                 continue
-            self.logger_msg(f'Swap successfully! txn hash: {txn_hash}', 'success')
 
             if settings.REVERSE_SWAP:
                 sleep_time = random.randint(*settings.SLEEP_RANGE_BETWEEN_REVERSE_SWAP)
@@ -461,7 +459,7 @@ class LiquidSwapSwap(ModuleBase):
                 txn_hash = await self.send_txn(is_reverse=True)
                 if not txn_hash:
                     continue
-                self.logger_msg(f'Reverse swap successfully! txn hash: {txn_hash}', 'success')
+
                 sleep_time = random.randint(*settings.SLEEP_RANGE_BETWEEN_REVERSE_SWAP)
                 self.logger_msg(f'sleeping after reverse swap: {sleep_time} second')
             success_count += 1

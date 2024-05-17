@@ -106,7 +106,7 @@ class ModuleBase(Logger):
             return data
 
         except Exception as e:
-            self.logger_msg(str(e), 'error')
+            self.logger_msg(str(e), 'debug')
             return None
 
     async def get_token_info(self, token_obj: TokenBase) -> dict | None:
@@ -128,7 +128,7 @@ class ModuleBase(Logger):
             return token_info["data"]
 
         except Exception as e:
-            self.logger_msg(f"Error getting token info: {e}", 'error')
+            self.logger_msg(f"Error getting token info: {e}", 'debug')
             return None
 
     async def submit_bcs_transaction(self, signed_transaction):
@@ -211,7 +211,7 @@ class ModuleBase(Logger):
             return True
 
         except Exception as ex:
-            self.logger_msg(f'error: {ex}', 'error')
+            self.logger_msg(f'error: {ex}', 'debug')
             return False
 
     async def register_coin_for_wallet(
@@ -346,8 +346,8 @@ class ModuleBase(Logger):
 
     def check_txn_receipt(self, txn_receipt, tx_hash) -> str | None:
         if txn_receipt.status == enums.TransactionStatus.SUCCESS:
-            msg = f"Transaction success, vm status: {txn_receipt.vm_status}. Txn Hash: {tx_hash}"
-            self.logger_msg(msg, 'success')
+            # msg = f"Transaction success, vm status: {txn_receipt.vm_status}. Txn Hash: {tx_hash}"
+            # self.logger_msg(msg, 'success')
             return tx_hash
 
         elif txn_receipt.status == enums.TransactionStatus.FAILED:
@@ -387,7 +387,7 @@ class ModuleBase(Logger):
 
         self.logger_msg(
             f"Transaction simulation success. {txn_info_message} Gas used: {simulation_status.gas_used}",
-            'success'
+            'debug'
         )
 
         if int(simulation_status.gas_used) <= 200:
@@ -407,9 +407,9 @@ class ModuleBase(Logger):
             raise TransactionSubmitError(err_msg)
 
         self.logger_msg(
-            f"Txn sent. Waiting for receipt (Timeout in {self.client.client_config.transaction_wait_in_seconds}s)."
-            f" Txn Hash: {tx_hash}",
-            'success'
+            f"Txn sent. Waiting for receipt (Timeout in {self.client.client_config.transaction_wait_in_seconds}s). "
+            f"https://explorer.aptoslabs.com/txn/{tx_hash}",
+            'warning'
         )
         txn_receipt = await self.wait_for_receipt(tx_hash)
 
