@@ -38,7 +38,7 @@ class Worker(Logger):
         await clear_file("files/succeeded_wallets.txt")
         await clear_file("files/failed_wallets.txt")
         if settings.USE_PROXY:
-            proxies = list(dict.fromkeys(await read_lines("files/proxies.txt")))
+            proxies = list(dict.fromkeys(await read_lines("files/proxies_test.txt")))
 
             if len(proxies) == 0:
                 self.logger_msg("Proxy usage is enabled, but the file with them is empty", "critical")
@@ -47,7 +47,7 @@ class Worker(Logger):
             self.logger_msg("Working without proxies")
             proxies = [None]
 
-        private_keys = list(dict.fromkeys(await read_lines("files/private_keys.txt")))
+        private_keys = list(dict.fromkeys(await read_lines("files/private_keys_test.txt")))
         accounts = list(zip(proxies if settings.STRICT_PROXY else cycle(proxies), private_keys))
 
         if settings.SHUFFLE_ACCOUNTS:

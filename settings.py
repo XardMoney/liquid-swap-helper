@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DEBUG_MODE = 0
+DEBUG_MODE = 1
 
 SHUFFLE_ACCOUNTS = True
 

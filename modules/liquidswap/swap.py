@@ -1,4 +1,5 @@
 import asyncio
+import json
 import random
 from typing import Literal
 
@@ -15,7 +16,7 @@ from core.contracts import TokenBase
 from core.models import TransactionPayloadData
 from modules.liquidswap.config import POOLS_INFO
 from modules.liquidswap.decorators import tx_retry
-from modules.liquidswap.exceptions import BuildTransactionError
+from modules.liquidswap.exceptions import BuildTransactionError, DashboardRegistrationError
 from modules.liquidswap.math import get_coins_out_with_fees_stable, d, get_coins_out_with_fees
 
 
@@ -403,7 +404,7 @@ class LiquidSwapSwap(ModuleBase):
             return txn_hash
 
         elif isinstance(txn_payload_data.payload, dict):
-            tx_hash = await self.client.submit_transaction(self.account, txn_payload_data.payload)
+            tx_hash = await self.aptos_client.submit_transaction(self.account, txn_payload_data.payload)
             txn_receipt = await self.wait_for_receipt(tx_hash)
             return self.check_txn_receipt(txn_receipt, tx_hash)
 
@@ -425,11 +426,71 @@ class LiquidSwapSwap(ModuleBase):
 
         return txn_hash
 
+    def hex_to_list_int(self, hex_string: str) -> list[int]:
+        if hex_string.startswith("0x"):
+            hex_string = hex_string[2:]
+
+        # convert hexadecimals to list[int]
+        signature_ints = [int(hex_string[i:i + 2], 16) for i in range(0, len(hex_string), 2)]
+        # self.logger_msg(f'Signature: {signature_ints}', 'debug')
+
+        return signature_ints
+
+    async def dashboard_registration(self, target: str = 'ae76af25-8425-4e68-b501-a780f50bb84c', wallet: str = 'Petra'):
+        token_url = f'https://api.airdrop.liquidswap.com/account/{self.account_address}/'
+        signature_url = 'https://api.airdrop.liquidswap.com/signature'
+        token_resp = await self.custom_client.get(token_url)
+        token_data = token_resp.json()
+        self.logger_msg(token_data, 'debug')
+        token = token_data['token']
+
+        # token = "I'm DooDoo OG: 651d6039-cc40-4d01-a104-3dab81cf9ff1"
+        msg = (
+            "APTOS\n"
+            f"address: {self.account_address}\n"
+            "application: https://airdrop.liquidswap.com\n"
+            "chainId: 1\n"
+            f"message: {token}\n"
+            "nonce: 1"
+        )
+        msg_bytes = msg.encode('utf-8')
+        hex_string = str(self.account.sign(msg_bytes))
+        signature_ints = self.hex_to_list_int(hex_string)
+
+        payload = {
+            'network': 'APT',
+            'signature': ','.join(str(el) for el in signature_ints),
+            'key': str(self.account.public_key()),
+            'msg': msg,
+            'target': target,
+            'wallet': wallet,
+            'refferal': '',  # TODO
+        }
+
+        json_data = json.dumps(payload, indent=4)
+        print(json_data)
+
+        self.logger_msg(payload, 'debug')
+        signature_resp = await self.custom_client.post(signature_url, json=payload)
+        print(signature_resp.request.headers)
+        signature_data = signature_resp.json()
+        self.logger_msg(signature_data, 'debug')
+        match signature_data['statusCode']:
+            case 200:
+                return True
+            case 400:
+                raise DashboardRegistrationError
+
     # TODO
     async def swap(self):
         pass
 
     async def full_swap(self):
+        # Проверяем и делаем регистрацию в дашборде на получение дропа
+        await self.dashboard_registration()
+
+
+        return
         swaps_limit = random.randint(*settings.SWAPS_LIMIT_RANGE)
         success_count = 0
         for i in range(1, swaps_limit + 1):
