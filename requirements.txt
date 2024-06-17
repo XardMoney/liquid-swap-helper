@@ -3,3 +3,8 @@ loguru==0.7.2
 python-dotenv==1.0.1
 pydantic==2.7.1
 fake-useragent==1.5.1
+ccxt==4.3.42
+msoffcrypto-tool==5.4.1
+pandas==2.2.2
+openpyxl==3.1.2
+termcolor==2.3.0

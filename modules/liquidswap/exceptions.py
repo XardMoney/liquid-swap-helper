@@ -21,3 +21,6 @@ class BuildTransactionError(Exception):
 class DashboardRegistrationError(Exception):
     pass
 
+
+class TokenInfoError(Exception):
+    pass

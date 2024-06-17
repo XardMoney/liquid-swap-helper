@@ -167,6 +167,4 @@ trash/
 
 files/failed_wallets.txt
 files/logs
-files/private_keys.txt
-files/proxies.txt
 files/succeeded_wallets.txt

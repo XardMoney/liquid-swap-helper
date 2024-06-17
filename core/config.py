@@ -19,3 +19,6 @@ TOKENS_INFO = {
     'stAPTDitto': '0xd11107bdf0d6d7040c6c0bfbdecb6545191fdf13e8d8d259952f53e1713f61b5::staked_coin::StakedAptos',
     'stAPTAmnis': '0x111ae3e5bc816a5e63c2da97d0aa3886519e0cd5e4b046659fa35796bd11542a::stapt_token::StakedApt'
 }
+
+OKX_TOKENS_MAPPING = {
+}

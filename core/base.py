@@ -14,7 +14,7 @@ from core.client import AptosCustomRestClient, CustomClient
 from core.config import RPC_URLS
 from core.models import TransactionSimulationResult, TransactionReceipt
 from modules.liquidswap.exceptions import (
-    TransactionSimulationError, TransactionSubmitError, TransactionFailedError, TransactionTimeoutError
+    TransactionSimulationError, TransactionSubmitError, TransactionFailedError, TransactionTimeoutError, TokenInfoError
 )
 from settings import GAS_MULTIPLIER, GAS_LIMIT
 from utils.log import Logger
@@ -50,6 +50,9 @@ class ModuleBase(Logger):
 
         self.token_x_decimals = await self.get_token_decimals(token_obj=self.coin_x)
         self.token_y_decimals = await self.get_token_decimals(token_obj=self.coin_y)
+
+        if not self.token_x_decimals or not self.token_y_decimals:
+            raise TokenInfoError
 
     async def get_token_decimals(self, token_obj: TokenBase) -> int | None:
         """

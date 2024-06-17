@@ -14,16 +14,19 @@ from core.base import ModuleBase
 from core.config import NUMBER_OF_RETRIES, TOKENS_INFO
 from core.contracts import TokenBase
 from core.models import TransactionPayloadData
+from modules.exchange.okx_old import OKXExchange
 from modules.liquidswap.config import POOLS_INFO
-from modules.liquidswap.decorators import tx_retry
+from modules.liquidswap.decorators import retry
 from modules.liquidswap.exceptions import BuildTransactionError, DashboardRegistrationError
 from modules.liquidswap.math import get_coins_out_with_fees_stable, d, get_coins_out_with_fees
+from utils.file import read_lines
 
 
 class LiquidSwapSwap(ModuleBase):
     def __init__(
             self,
             account: Account,
+            cex_address: str,
             proxy: str = None
     ):
         proxies = {
@@ -408,7 +411,7 @@ class LiquidSwapSwap(ModuleBase):
             txn_receipt = await self.wait_for_receipt(tx_hash)
             return self.check_txn_receipt(txn_receipt, tx_hash)
 
-    @tx_retry(attempts=NUMBER_OF_RETRIES)
+    @retry(attempts=NUMBER_OF_RETRIES)
     async def send_txn(self, is_reverse: bool = False) -> str | None:
         if is_reverse:
             txn_payload_data = await self.build_reverse_transaction_payload()
@@ -426,17 +429,20 @@ class LiquidSwapSwap(ModuleBase):
 
         return txn_hash
 
-    def hex_to_list_int(self, hex_string: str) -> list[int]:
+    @staticmethod
+    def hex_to_list_int(hex_string: str) -> list[int]:
         if hex_string.startswith("0x"):
             hex_string = hex_string[2:]
-
-        # convert hexadecimals to list[int]
         signature_ints = [int(hex_string[i:i + 2], 16) for i in range(0, len(hex_string), 2)]
-        # self.logger_msg(f'Signature: {signature_ints}', 'debug')
 
         return signature_ints
 
-    async def dashboard_registration(self, target: str = 'ae76af25-8425-4e68-b501-a780f50bb84c', wallet: str = 'Petra'):
+    @retry(attempts=NUMBER_OF_RETRIES, exceptions=(DashboardRegistrationError,))
+    async def dashboard_registration(
+            self,
+            target: str = 'ae76af25-8425-4e68-b501-a780f50bb84c',
+            wallet: str = 'Petra'
+    ):
         token_url = f'https://api.airdrop.liquidswap.com/account/{self.account_address}/'
         signature_url = 'https://api.airdrop.liquidswap.com/signature'
         token_resp = await self.custom_client.get(token_url)
@@ -444,7 +450,7 @@ class LiquidSwapSwap(ModuleBase):
         self.logger_msg(token_data, 'debug')
         token = token_data['token']
 
-        # token = "I'm DooDoo OG: 651d6039-cc40-4d01-a104-3dab81cf9ff1"
+        # token = "I'm DooDoo OG: c2e29e4a-73e9-4a49-b395-fdf586a312cf"
         msg = (
             "APTOS\n"
             f"address: {self.account_address}\n"
@@ -464,33 +470,34 @@ class LiquidSwapSwap(ModuleBase):
             'msg': msg,
             'target': target,
             'wallet': wallet,
-            'refferal': '',  # TODO
+            'referral': settings.REF_CODE if settings.REF_CODE else '',
         }
-
-        json_data = json.dumps(payload, indent=4)
-        print(json_data)
 
         self.logger_msg(payload, 'debug')
         signature_resp = await self.custom_client.post(signature_url, json=payload)
-        print(signature_resp.request.headers)
         signature_data = signature_resp.json()
         self.logger_msg(signature_data, 'debug')
-        match signature_data['statusCode']:
-            case 200:
-                return True
-            case 400:
-                raise DashboardRegistrationError
+        if signature_data.get('token'):
+            self.logger_msg(f'Airdrop register successfully! invited: {signature_data.get("invited")}', 'success')
+            await asyncio.sleep(random.randint(*settings.SLEEP_RANGE_AFTER_REGISTRATION))
+            return True
+
+        if signature_data.get('statusCode'):
+            match signature_data['statusCode']:
+                case 400:
+                    raise DashboardRegistrationError
+
+        self.logger_msg(f'Error while dashboard registration! response data: {signature_data}', 'error')
+        raise DashboardRegistrationError
 
     # TODO
     async def swap(self):
         pass
 
     async def full_swap(self):
-        # Проверяем и делаем регистрацию в дашборде на получение дропа
+        # Execute dashboard registration for airdrop
         await self.dashboard_registration()
 
-
-        return
         swaps_limit = random.randint(*settings.SWAPS_LIMIT_RANGE)
         success_count = 0
         for i in range(1, swaps_limit + 1):
@@ -523,12 +530,14 @@ class LiquidSwapSwap(ModuleBase):
 
                 sleep_time = random.randint(*settings.SLEEP_RANGE_BETWEEN_REVERSE_SWAP)
                 self.logger_msg(f'sleeping after reverse swap: {sleep_time} second')
+                await asyncio.sleep(sleep_time)
             success_count += 1
 
         self.logger_msg(f'Stop full_swap module. Success count: {success_count}', 'success')
         if success_count == 0:
             return False
 
+        await self.withdraw_to_wallet(self.coin_x.symbol)
         return True
 
     # TODO

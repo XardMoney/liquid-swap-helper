@@ -6,7 +6,7 @@ import settings
 from core.base import ModuleBase
 
 
-def tx_retry(attempts, exceptions=(Exception,)):
+def retry(attempts, exceptions=(Exception,)):
     def decorator_retry(func):
         @functools.wraps(func)
         async def wrapper(self: ModuleBase, *args, **kwargs):
