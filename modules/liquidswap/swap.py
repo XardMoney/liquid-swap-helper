@@ -1,5 +1,4 @@
 import asyncio
-import json
 import random
 from typing import Literal
 
@@ -14,12 +13,11 @@ from core.base import ModuleBase
 from core.config import NUMBER_OF_RETRIES, TOKENS_INFO
 from core.contracts import TokenBase
 from core.models import TransactionPayloadData
-from modules.exchange.okx_old import OKXExchange
+from modules.exchange.okx import OKXExchange
 from modules.liquidswap.config import POOLS_INFO
-from modules.liquidswap.decorators import retry
+from modules.liquidswap.decorators import swap_retry, retry
 from modules.liquidswap.exceptions import BuildTransactionError, DashboardRegistrationError
 from modules.liquidswap.math import get_coins_out_with_fees_stable, d, get_coins_out_with_fees
-from utils.file import read_lines
 
 
 class LiquidSwapSwap(ModuleBase):
@@ -36,6 +34,7 @@ class LiquidSwapSwap(ModuleBase):
 
         super().__init__(
             account=account,
+            cex_address=cex_address,
             proxies=proxies
         )
 
@@ -411,7 +410,7 @@ class LiquidSwapSwap(ModuleBase):
             txn_receipt = await self.wait_for_receipt(tx_hash)
             return self.check_txn_receipt(txn_receipt, tx_hash)
 
-    @retry(attempts=NUMBER_OF_RETRIES)
+    @swap_retry(attempts=NUMBER_OF_RETRIES)
     async def send_txn(self, is_reverse: bool = False) -> str | None:
         if is_reverse:
             txn_payload_data = await self.build_reverse_transaction_payload()
@@ -500,16 +499,35 @@ class LiquidSwapSwap(ModuleBase):
 
         swaps_limit = random.randint(*settings.SWAPS_LIMIT_RANGE)
         success_count = 0
+
+        # withdraw from exchange
+        exchange_client = OKXExchange(
+            settings.OKX_API_KEY,
+            settings.OKX_API_SECRET,
+            settings.OKX_API_PASS_PHRASE,
+            settings.OKX_PROXY
+        )
+
+        self.coin_x = TokenBase(settings.TOKEN_SWAP_INPUT, TOKENS_INFO[settings.TOKEN_SWAP_INPUT])
+        balance_x_wei = await self.get_wallet_token_balance(
+            wallet_address=self.account.address(),
+            token_address=self.coin_x.contract_address
+        )
+        token_x_decimals = await self.get_token_decimals(token_obj=self.coin_x)
+
+        balance_x_decimals = balance_x_wei / 10 ** token_x_decimals
+        if balance_x_decimals < settings.MIN_WALLET_BALANCE:
+            deposit_amount = round(random.uniform(*settings.DEPOSIT_LIMIT_RANGE), 4)
+            await exchange_client.withdraw('APT', 'APT', deposit_amount, address=str(self.account.address()))
+
         for i in range(1, swaps_limit + 1):
             # Initial
-            coin_x_symbol = random.choice(settings.TOKENS_SWAP_INPUT)
             coin_y_symbol = random.choice(settings.TOKENS_SWAP_OUTPUT)
-            self.coin_x = TokenBase(coin_x_symbol, TOKENS_INFO[coin_x_symbol])
             self.coin_y = TokenBase(coin_y_symbol, TOKENS_INFO[coin_y_symbol])
             await self.async_init()
 
             self.logger_msg(
-                f'Start full_swap module. Launch {i} of {swaps_limit}. Token out: {coin_x_symbol}. '
+                f'Start full_swap module. Launch {i} of {swaps_limit}. Token out: {settings.TOKEN_SWAP_INPUT}. '
                 f'Token in: {coin_y_symbol}',
                 'success'
             )
@@ -533,11 +551,13 @@ class LiquidSwapSwap(ModuleBase):
                 await asyncio.sleep(sleep_time)
             success_count += 1
 
+        await asyncio.sleep(random.randint(*settings.SLEEP_RANGE_BEFORE_SEND_TO_CEX))
+        txn_hash = await self.send_to_cex()
+        self.logger_msg(f'Send token to cex success! https://explorer.aptoslabs.com/txn/{txn_hash}', 'success')
         self.logger_msg(f'Stop full_swap module. Success count: {success_count}', 'success')
         if success_count == 0:
             return False
 
-        await self.withdraw_to_wallet(self.coin_x.symbol)
         return True
 
     # TODO

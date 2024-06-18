@@ -6,7 +6,7 @@ import settings
 from core.base import ModuleBase
 
 
-def retry(attempts, exceptions=(Exception,)):
+def swap_retry(attempts, exceptions=(Exception,)):
     def decorator_retry(func):
         @functools.wraps(func)
         async def wrapper(self: ModuleBase, *args, **kwargs):
@@ -28,6 +28,28 @@ def retry(attempts, exceptions=(Exception,)):
                         msg = f'Swap transaction ERROR! '
 
                     msg += f'Attempt {attempt}/{attempts}. Error: {e}'
+                    self.logger_msg(msg, 'error')
+                    sleep_time = random.randint(*settings.SLEEP_RANGE_BETWEEN_ATTEMPT)
+                    self.logger_msg(f'Sleep until next attempt: {sleep_time} second.')
+                    await sleep(sleep_time)
+            return None
+        return wrapper
+    return decorator_retry
+
+
+def retry(attempts, exceptions=(Exception,)):
+    def decorator_retry(func):
+        @functools.wraps(func)
+        async def wrapper(self: ModuleBase, *args, **kwargs):
+            func_name = func.__name__
+            for attempt in range(1, attempts + 1):
+                try:
+                    res = await func(self, *args,  **kwargs)
+                    msg = f'Function {func_name}: attempt {attempt}/{attempts} executed!'
+                    self.logger_msg(msg, 'success')
+                    return res
+                except exceptions as e:
+                    msg = f'Function {func_name}: attempt {attempt}/{attempts}. Error: {e}'
                     self.logger_msg(msg, 'error')
                     sleep_time = random.randint(*settings.SLEEP_RANGE_BETWEEN_ATTEMPT)
                     self.logger_msg(f'Sleep until next attempt: {sleep_time} second.')

@@ -17,7 +17,7 @@ SLEEP_RANGE_BETWEEN_ACCOUNTS = [150, 250]  # [0, 10000]
 SLEEP_RANGE_BETWEEN_ATTEMPT = [10, 20]  # [0, 10000]
 
 # Swap settings
-TOKENS_SWAP_INPUT = ["APT"]  # "APT", "stAPTDitto", "stAPTAmnis"
+TOKEN_SWAP_INPUT = "APT"  # "APT", "stAPTDitto", "stAPTAmnis"
 TOKENS_SWAP_OUTPUT = ["stAPTDitto", "stAPTAmnis"]  # "APT", "stAPTDitto", "stAPTAmnis"
 MIN_BALANCE = 0.1  # 0.1 - 1000
 AMOUNT_PERCENT = (10, 30)  # (1, 100)
@@ -31,11 +31,6 @@ GAS_MULTIPLIER = 1.15  # 1.01 - 2
 
 # Gas limit of each transaction, 100000 = 0.1 APT (random selection)
 GAS_LIMIT = [4200, 4700]
-
-# Exchange setting
-MIN_WALLET_BALANCE = 2
-DEPOSIT_LIMIT_RANGE = [1, 10]
-WITHDRAW_PERCENT_RANGE = (80, 90)
 
 
 '-------------------------------------------DASHBOARD REGISTRATION----------------------------------------------------'
@@ -53,7 +48,13 @@ EXCEL_PAGE_NAME = "data"
 
 '----------------------------------------------EXCHANGE CONTROL--------------------------------------------------------'
 
+MIN_WALLET_BALANCE = 2
+DEPOSIT_LIMIT_RANGE = [1, 3]
+SLEEP_RANGE_BEFORE_SEND_TO_CEX = [10, 30]
+WITHDRAW_PERCENT_RANGE = (80, 90)
+
 COLLECT_FROM_SUB_CEX = True
+OKX_PROXY = ''
 OKX_API_KEY = ''
 OKX_API_SECRET = ''
-OKX_API_PASSPHRAS = ''
+OKX_API_PASS_PHRASE = ''

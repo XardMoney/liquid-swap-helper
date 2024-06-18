@@ -41,8 +41,7 @@ class CustomClient:
         self.client = httpx.AsyncClient(
             limits=limits,
             timeout=timeout,
-            proxies=proxies,
-            http2=True
+            proxies=proxies
         )
 
     def get_random_user_agent(self):

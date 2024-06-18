@@ -6,7 +6,6 @@ from getpass import getpass
 
 from loguru import logger
 from msoffcrypto.exceptions import DecryptionError, InvalidKeyError
-from termcolor import cprint
 
 from core.dataclasses import ExcelAccountData
 
@@ -21,23 +20,23 @@ def get_data_from_excel(
         decrypted_data = io.BytesIO()
         with open(file_path, 'rb') as file:
             if encrypted:
-                cprint('⚔️ Enter the password degen', color='light_blue')
+                logger.success('⚔️ Enter the password degen')
                 password = getpass()
                 office_file = msoffcrypto.OfficeFile(file)
 
                 try:
                     office_file.load_key(password=password)
                 except msoffcrypto.exceptions.DecryptionError:
-                    cprint('\n⚠️ Incorrect password to decrypt Excel file! ⚠️', color='light_red', attrs=["blink"])
+                    logger.error('\n⚠️ Incorrect password to decrypt Excel file! ⚠️')
                     raise DecryptionError('Incorrect password')
 
                 try:
                     office_file.decrypt(decrypted_data)
                 except msoffcrypto.exceptions.InvalidKeyError:
-                    cprint('\n⚠️ Incorrect password to decrypt Excel file! ⚠️', color='light_red', attrs=["blink"])
+                    logger.error('\n⚠️ Incorrect password to decrypt Excel file! ⚠️')
                     raise InvalidKeyError('Incorrect password')
                 except msoffcrypto.exceptions.DecryptionError:
-                    cprint('\n⚠️ Set password on your Excel file first! ⚠️', color='light_red', attrs=["blink"])
+                    logger.error('\n⚠️ Set password on your Excel file first! ⚠️')
                     raise DecryptionError('Excel file without password!')
 
                 office_file.decrypt(decrypted_data)
@@ -48,7 +47,7 @@ def get_data_from_excel(
                 wb = pd.read_excel(decrypted_data, sheet_name=page_name)
             except ValueError as e:
                 logger.error(e)
-                cprint('\n⚠️ Wrong page name! Please check EXCEL_PAGE_NAME ⚠️', color='light_red', attrs=["blink"])
+                logger.error('\n⚠️ Wrong page name! Please check EXCEL_PAGE_NAME ⚠️')
                 raise ValueError(f"{e}")
 
             instances = []

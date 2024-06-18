@@ -23,10 +23,9 @@ class Worker(Logger):
             self.logger_msg('AMOUNT_PERCENT and AMOUNT_QUANTITY cannot be an empty value', 'critical')
             return False
 
-        for token in settings.TOKENS_SWAP_INPUT:
-            if not TOKENS_INFO.get(token):
-                self.logger_msg(f'input token: {token} unavailable for swap', 'critical')
-                return False
+        if not TOKENS_INFO.get(settings.TOKEN_SWAP_INPUT):
+            self.logger_msg(f'input token: {settings.TOKEN_SWAP_INPUT} unavailable for swap', 'critical')
+            return False
 
         for token in settings.TOKENS_SWAP_OUTPUT:
             if not TOKENS_INFO.get(token):
