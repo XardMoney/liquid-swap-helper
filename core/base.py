@@ -16,7 +16,7 @@ from core.models import TransactionSimulationResult, TransactionReceipt
 from modules.liquidswap.exceptions import (
     TransactionSimulationError, TransactionSubmitError, TransactionFailedError, TransactionTimeoutError, TokenInfoError
 )
-from settings import GAS_MULTIPLIER, GAS_LIMIT, WITHDRAW_PERCENT_RANGE
+from settings import GAS_MULTIPLIER, GAS_LIMIT
 from utils.log import Logger
 
 
@@ -419,22 +419,4 @@ class ModuleBase(Logger):
         )
         txn_receipt = await self.wait_for_receipt(tx_hash)
 
-        return self.check_txn_receipt(txn_receipt, tx_hash)
-
-    async def send_to_cex(self):
-        min_amount_out_percent, max_amount_out_percent = WITHDRAW_PERCENT_RANGE
-        percent = random.randint(int(min_amount_out_percent), int(max_amount_out_percent)) / 100
-        amount = int(self.initial_balance_x_wei * percent)
-        payload = {
-            "function": "0x1::aptos_account::transfer",
-            "type_arguments": [],
-            "arguments": [
-                self.cex_address,
-                str(amount)
-            ],
-            "type": "entry_function_payload"
-        }
-        self.logger_msg(payload, 'debug')
-        tx_hash = await self.aptos_client.submit_transaction(self.account, payload)
-        txn_receipt = await self.wait_for_receipt(tx_hash)
         return self.check_txn_receipt(txn_receipt, tx_hash)

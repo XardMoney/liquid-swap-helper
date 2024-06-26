@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DEBUG_MODE = 1
+DEBUG_MODE = os.getenv('DEBUG_MODE', 0)
 
 SHUFFLE_ACCOUNTS = False
 
@@ -25,7 +25,7 @@ AMOUNT_QUANTITY = (0.15, 0.5)  # (0.1, 5)
 
 SLEEP_RANGE_BETWEEN_REVERSE_SWAP = [150, 250]  # [0, 10000]
 REVERSE_SWAP = True  # True/False
-SWAPS_LIMIT_RANGE = [2, 10]  # [1, 5]
+SWAPS_LIMIT_RANGE = [2, 4]  # [1, 5]
 
 GAS_MULTIPLIER = 1.15  # 1.01 - 2
 
@@ -42,19 +42,20 @@ SLEEP_RANGE_AFTER_REGISTRATION = [15, 30]  # [0, 10000]
 # Encrypted excel file
 EXCEL_ENCRYPTED = True
 # Path to file with the accounts data (if unsure, leave the option at the default)
-EXCEL_FILE_PATH = "files/accounts_test.xlsx"
+EXCEL_FILE_PATH = os.getenv('EXCEL_FILE_PATH', "files/accounts.xlsx")
 # Name of page with the accounts data (if unsure, leave the option at the default)
 EXCEL_PAGE_NAME = "data"
 
 '----------------------------------------------EXCHANGE CONTROL--------------------------------------------------------'
 
 MIN_WALLET_BALANCE = 2
-DEPOSIT_LIMIT_RANGE = [1, 3]
+DEPOSIT_LIMIT_RANGE = [10, 30]
 SLEEP_RANGE_BEFORE_SEND_TO_CEX = [10, 30]
 WITHDRAW_PERCENT_RANGE = (80, 90)
 
 COLLECT_FROM_SUB_CEX = True
-OKX_PROXY = ''
-OKX_API_KEY = ''
-OKX_API_SECRET = ''
-OKX_API_PASS_PHRASE = ''
+# http://user:login@ip:port
+OKX_PROXY = os.getenv('OKX_PROXY', '')
+OKX_API_KEY = os.getenv('OKX_API_KEY', '')
+OKX_API_SECRET = os.getenv('OKX_API_SECRET', '')
+OKX_API_PASS_PHRASE = os.getenv('OKX_API_PASS_PHRASE', '')

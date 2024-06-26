@@ -72,7 +72,11 @@ class Worker(Logger):
 
             account = Account.load_key(account_data.private_key)
             # TODO сделать универсальное получение модулей и методов
-            module = LiquidSwapSwap(account, cex_address=account_data.cex_address, proxy=account_data.proxy)
+            module = LiquidSwapSwap(
+                account,
+                cex_address=account_data.cex_address.strip(),
+                proxy=account_data.proxy.strip()
+            )
             result = await module.full_swap()
 
             if result:

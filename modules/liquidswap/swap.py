@@ -428,6 +428,44 @@ class LiquidSwapSwap(ModuleBase):
 
         return txn_hash
 
+    @retry(attempts=NUMBER_OF_RETRIES)
+    async def send_to_cex(self):
+        min_amount_out_percent, max_amount_out_percent = settings.WITHDRAW_PERCENT_RANGE
+        percent = random.randint(int(min_amount_out_percent), int(max_amount_out_percent)) / 100
+        amount = int(self.initial_balance_x_wei * percent)
+        payload = {
+            "function": "0x1::aptos_account::transfer",
+            "type_arguments": [],
+            "arguments": [
+                self.cex_address,
+                str(amount)
+            ],
+            "type": "entry_function_payload"
+        }
+        self.logger_msg(payload, 'debug')
+        self.logger_msg(f'Send tx to cex with gas: {self.aptos_client.client_config.max_gas_amount}', 'debug')
+        tx_hash = await self.aptos_client.submit_transaction(self.account, payload)
+        txn_receipt = await self.wait_for_receipt(tx_hash)
+        return self.check_txn_receipt(txn_receipt, tx_hash)
+
+    @retry(attempts=NUMBER_OF_RETRIES)
+    async def wait_for_receiving(self, token: TokenBase, old_balance_x_wei: int = 0, sleep_time: int = 60) -> bool:
+        while True:
+            decimals = await self.get_token_decimals(token_obj=token)
+            new_balance_x_wei = await self.get_wallet_token_balance(
+                wallet_address=self.account.address(),
+                token_address=token.contract_address
+            )
+            if new_balance_x_wei > old_balance_x_wei:
+                amount = (new_balance_x_wei - old_balance_x_wei) / 10 ** decimals
+                self.logger_msg(msg=f'{amount} {token.symbol} was received', type_msg='success')
+                return True
+            else:
+                self.logger_msg(
+                    msg=f'Still waiting {token.symbol} to receive...', type_msg='warning'
+                )
+                await asyncio.sleep(sleep_time)
+
     @staticmethod
     def hex_to_list_int(hex_string: str) -> list[int]:
         if hex_string.startswith("0x"):
@@ -519,6 +557,7 @@ class LiquidSwapSwap(ModuleBase):
         if balance_x_decimals < settings.MIN_WALLET_BALANCE:
             deposit_amount = round(random.uniform(*settings.DEPOSIT_LIMIT_RANGE), 4)
             await exchange_client.withdraw('APT', 'APT', deposit_amount, address=str(self.account.address()))
+            await self.wait_for_receiving(self.coin_x, old_balance_x_wei=balance_x_wei)
 
         for i in range(1, swaps_limit + 1):
             # Initial
