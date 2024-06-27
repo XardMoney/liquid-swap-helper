@@ -13,10 +13,11 @@ from core import enums
 from core.client import AptosCustomRestClient, CustomClient
 from core.config import RPC_URLS
 from core.models import TransactionSimulationResult, TransactionReceipt
+from modules.liquidswap.decorators import retry
 from modules.liquidswap.exceptions import (
     TransactionSimulationError, TransactionSubmitError, TransactionFailedError, TransactionTimeoutError, TokenInfoError
 )
-from settings import GAS_MULTIPLIER, GAS_LIMIT
+from settings import GAS_MULTIPLIER, GAS_LIMIT, NUMBER_OF_RETRIES
 from utils.log import Logger
 
 
@@ -34,7 +35,7 @@ class ModuleBase(Logger):
         self.aptos_client = AptosCustomRestClient(base_url=base_url, proxies=proxies)
         self.custom_client = CustomClient(proxies=proxies)
         self.account = account
-        self.cex_address = cex_address
+        self.cex_address = cex_address.strip()
         self.aptos_client.client_config.max_gas_amount = random.randint(*GAS_LIMIT)
 
         self.coin_x: TokenBase | None = None
@@ -115,6 +116,7 @@ class ModuleBase(Logger):
             self.logger_msg(str(e), 'debug')
             return None
 
+    @retry(attempts=NUMBER_OF_RETRIES)
     async def get_token_info(self, token_obj: TokenBase) -> dict | None:
         """
         Gets token info
@@ -126,16 +128,11 @@ class ModuleBase(Logger):
 
         coin_address = AccountAddress.from_str(token_obj.address)
 
-        try:
-            token_info = await self.aptos_client.account_resource(
-                coin_address,
-                f"0x1::coin::CoinInfo<{token_obj.contract_address}>",
-            )
-            return token_info["data"]
-
-        except Exception as e:
-            self.logger_msg(f"Error getting token info: {e}", 'debug')
-            return None
+        token_info = await self.aptos_client.account_resource(
+            coin_address,
+            f"0x1::coin::CoinInfo<{token_obj.contract_address}>",
+        )
+        return token_info["data"]
 
     async def submit_bcs_transaction(self, signed_transaction):
         try:

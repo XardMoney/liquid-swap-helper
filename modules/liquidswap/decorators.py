@@ -3,13 +3,12 @@ import random
 from asyncio import sleep
 
 import settings
-from core.base import ModuleBase
 
 
 def swap_retry(attempts, exceptions=(Exception,)):
     def decorator_retry(func):
         @functools.wraps(func)
-        async def wrapper(self: ModuleBase, *args, **kwargs):
+        async def wrapper(self, *args, **kwargs):
             for attempt in range(1, attempts + 1):
                 try:
                     txn_hash = await func(self, *args,  **kwargs)
@@ -40,7 +39,7 @@ def swap_retry(attempts, exceptions=(Exception,)):
 def retry(attempts, exceptions=(Exception,)):
     def decorator_retry(func):
         @functools.wraps(func)
-        async def wrapper(self: ModuleBase, *args, **kwargs):
+        async def wrapper(self, *args, **kwargs):
             func_name = func.__name__
             for attempt in range(1, attempts + 1):
                 try:

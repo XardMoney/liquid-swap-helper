@@ -22,7 +22,7 @@ class OKXExchange(Logger):
         self.api_key = api_key
         self.api_secret = api_secret
         self.api_password = api_password
-        self.proxy = proxy.strip()
+        self.proxy = proxy.strip() if proxy else None
         self.client = self.get_okx_client()
 
     def get_okx_client(self) -> okx | None:

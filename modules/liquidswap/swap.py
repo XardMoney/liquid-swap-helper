@@ -28,8 +28,8 @@ class LiquidSwapSwap(ModuleBase):
             proxy: str = None
     ):
         proxies = {
-            'http://': proxy,
-            'https://': proxy
+            'http://': proxy.strip(),
+            'https://': proxy.strip()
         } if proxy else None
 
         super().__init__(
@@ -527,10 +527,6 @@ class LiquidSwapSwap(ModuleBase):
         self.logger_msg(f'Error while dashboard registration! response data: {signature_data}', 'error')
         raise DashboardRegistrationError
 
-    # TODO
-    async def swap(self):
-        pass
-
     async def full_swap(self):
         # Execute dashboard registration for airdrop
         await self.dashboard_registration()
@@ -599,6 +595,6 @@ class LiquidSwapSwap(ModuleBase):
 
         return True
 
-    # TODO
-    async def reverse_swap(self):
+    #TODO
+    async def full_withdraw(self):
         pass
