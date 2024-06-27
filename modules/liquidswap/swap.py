@@ -13,9 +13,10 @@ from core.base import ModuleBase
 from core.config import NUMBER_OF_RETRIES, TOKENS_INFO
 from core.contracts import TokenBase
 from core.models import TransactionPayloadData
+from modules.exchange.okx import OKXExchange
 from modules.liquidswap.config import POOLS_INFO
-from modules.liquidswap.decorators import tx_retry
-from modules.liquidswap.exceptions import BuildTransactionError
+from modules.liquidswap.decorators import swap_retry, retry
+from modules.liquidswap.exceptions import BuildTransactionError, DashboardRegistrationError
 from modules.liquidswap.math import get_coins_out_with_fees_stable, d, get_coins_out_with_fees
 
 
@@ -23,15 +24,17 @@ class LiquidSwapSwap(ModuleBase):
     def __init__(
             self,
             account: Account,
+            cex_address: str,
             proxy: str = None
     ):
         proxies = {
-            'http://': proxy,
-            'https://': proxy
+            'http://': proxy.strip(),
+            'https://': proxy.strip()
         } if proxy else None
 
         super().__init__(
             account=account,
+            cex_address=cex_address,
             proxies=proxies
         )
 
@@ -403,11 +406,11 @@ class LiquidSwapSwap(ModuleBase):
             return txn_hash
 
         elif isinstance(txn_payload_data.payload, dict):
-            tx_hash = await self.client.submit_transaction(self.account, txn_payload_data.payload)
+            tx_hash = await self.aptos_client.submit_transaction(self.account, txn_payload_data.payload)
             txn_receipt = await self.wait_for_receipt(tx_hash)
             return self.check_txn_receipt(txn_receipt, tx_hash)
 
-    @tx_retry(attempts=NUMBER_OF_RETRIES)
+    @swap_retry(attempts=NUMBER_OF_RETRIES)
     async def send_txn(self, is_reverse: bool = False) -> str | None:
         if is_reverse:
             txn_payload_data = await self.build_reverse_transaction_payload()
@@ -425,23 +428,141 @@ class LiquidSwapSwap(ModuleBase):
 
         return txn_hash
 
-    # TODO
-    async def swap(self):
-        pass
+    @retry(attempts=NUMBER_OF_RETRIES)
+    async def send_to_cex(self):
+        min_amount_out_percent, max_amount_out_percent = settings.WITHDRAW_PERCENT_RANGE
+        percent = random.randint(int(min_amount_out_percent), int(max_amount_out_percent)) / 100
+        amount = int(self.initial_balance_x_wei * percent)
+        payload = {
+            "function": "0x1::aptos_account::transfer",
+            "type_arguments": [],
+            "arguments": [
+                self.cex_address,
+                str(amount)
+            ],
+            "type": "entry_function_payload"
+        }
+        self.logger_msg(payload, 'debug')
+        self.logger_msg(f'Send tx to cex with gas: {self.aptos_client.client_config.max_gas_amount}', 'debug')
+        tx_hash = await self.aptos_client.submit_transaction(self.account, payload)
+        txn_receipt = await self.wait_for_receipt(tx_hash)
+        return self.check_txn_receipt(txn_receipt, tx_hash)
+
+    @retry(attempts=NUMBER_OF_RETRIES)
+    async def wait_for_receiving(self, token: TokenBase, old_balance_x_wei: int = 0, sleep_time: int = 60) -> bool:
+        while True:
+            decimals = await self.get_token_decimals(token_obj=token)
+            new_balance_x_wei = await self.get_wallet_token_balance(
+                wallet_address=self.account.address(),
+                token_address=token.contract_address
+            )
+            if new_balance_x_wei > old_balance_x_wei:
+                amount = (new_balance_x_wei - old_balance_x_wei) / 10 ** decimals
+                self.logger_msg(msg=f'{amount} {token.symbol} was received', type_msg='success')
+                return True
+            else:
+                self.logger_msg(
+                    msg=f'Still waiting {token.symbol} to receive...', type_msg='warning'
+                )
+                await asyncio.sleep(sleep_time)
+
+    @staticmethod
+    def hex_to_list_int(hex_string: str) -> list[int]:
+        if hex_string.startswith("0x"):
+            hex_string = hex_string[2:]
+        signature_ints = [int(hex_string[i:i + 2], 16) for i in range(0, len(hex_string), 2)]
+
+        return signature_ints
+
+    @retry(attempts=NUMBER_OF_RETRIES, exceptions=(DashboardRegistrationError,))
+    async def dashboard_registration(
+            self,
+            target: str = 'ae76af25-8425-4e68-b501-a780f50bb84c',
+            wallet: str = 'Petra'
+    ):
+        token_url = f'https://api.airdrop.liquidswap.com/account/{self.account_address}/'
+        signature_url = 'https://api.airdrop.liquidswap.com/signature'
+        token_resp = await self.custom_client.get(token_url)
+        token_data = token_resp.json()
+        self.logger_msg(token_data, 'debug')
+        token = token_data['token']
+
+        # token = "I'm DooDoo OG: c2e29e4a-73e9-4a49-b395-fdf586a312cf"
+        msg = (
+            "APTOS\n"
+            f"address: {self.account_address}\n"
+            "application: https://airdrop.liquidswap.com\n"
+            "chainId: 1\n"
+            f"message: {token}\n"
+            "nonce: 1"
+        )
+        msg_bytes = msg.encode('utf-8')
+        hex_string = str(self.account.sign(msg_bytes))
+        signature_ints = self.hex_to_list_int(hex_string)
+
+        payload = {
+            'network': 'APT',
+            'signature': ','.join(str(el) for el in signature_ints),
+            'key': str(self.account.public_key()),
+            'msg': msg,
+            'target': target,
+            'wallet': wallet,
+            'referral': settings.REF_CODE if settings.REF_CODE else '',
+        }
+
+        self.logger_msg(payload, 'debug')
+        signature_resp = await self.custom_client.post(signature_url, json=payload)
+        signature_data = signature_resp.json()
+        self.logger_msg(signature_data, 'debug')
+        if signature_data.get('token'):
+            self.logger_msg(f'Airdrop register successfully! invited: {signature_data.get("invited")}', 'success')
+            await asyncio.sleep(random.randint(*settings.SLEEP_RANGE_AFTER_REGISTRATION))
+            return True
+
+        if signature_data.get('statusCode'):
+            match signature_data['statusCode']:
+                case 400:
+                    raise DashboardRegistrationError
+
+        self.logger_msg(f'Error while dashboard registration! response data: {signature_data}', 'error')
+        raise DashboardRegistrationError
 
     async def full_swap(self):
+        # Execute dashboard registration for airdrop
+        await self.dashboard_registration()
+
         swaps_limit = random.randint(*settings.SWAPS_LIMIT_RANGE)
         success_count = 0
+
+        # withdraw from exchange
+        exchange_client = OKXExchange(
+            settings.OKX_API_KEY,
+            settings.OKX_API_SECRET,
+            settings.OKX_API_PASS_PHRASE,
+            settings.OKX_PROXY
+        )
+
+        self.coin_x = TokenBase(settings.TOKEN_SWAP_INPUT, TOKENS_INFO[settings.TOKEN_SWAP_INPUT])
+        balance_x_wei = await self.get_wallet_token_balance(
+            wallet_address=self.account.address(),
+            token_address=self.coin_x.contract_address
+        )
+        token_x_decimals = await self.get_token_decimals(token_obj=self.coin_x)
+
+        balance_x_decimals = balance_x_wei / 10 ** token_x_decimals
+        if balance_x_decimals < settings.MIN_WALLET_BALANCE:
+            deposit_amount = round(random.uniform(*settings.DEPOSIT_LIMIT_RANGE), 4)
+            await exchange_client.withdraw('APT', 'APT', deposit_amount, address=str(self.account.address()))
+            await self.wait_for_receiving(self.coin_x, old_balance_x_wei=balance_x_wei)
+
         for i in range(1, swaps_limit + 1):
             # Initial
-            coin_x_symbol = random.choice(settings.TOKENS_SWAP_INPUT)
             coin_y_symbol = random.choice(settings.TOKENS_SWAP_OUTPUT)
-            self.coin_x = TokenBase(coin_x_symbol, TOKENS_INFO[coin_x_symbol])
             self.coin_y = TokenBase(coin_y_symbol, TOKENS_INFO[coin_y_symbol])
             await self.async_init()
 
             self.logger_msg(
-                f'Start full_swap module. Launch {i} of {swaps_limit}. Token out: {coin_x_symbol}. '
+                f'Start full_swap module. Launch {i} of {swaps_limit}. Token out: {settings.TOKEN_SWAP_INPUT}. '
                 f'Token in: {coin_y_symbol}',
                 'success'
             )
@@ -462,14 +583,18 @@ class LiquidSwapSwap(ModuleBase):
 
                 sleep_time = random.randint(*settings.SLEEP_RANGE_BETWEEN_REVERSE_SWAP)
                 self.logger_msg(f'sleeping after reverse swap: {sleep_time} second')
+                await asyncio.sleep(sleep_time)
             success_count += 1
 
+        await asyncio.sleep(random.randint(*settings.SLEEP_RANGE_BEFORE_SEND_TO_CEX))
+        txn_hash = await self.send_to_cex()
+        self.logger_msg(f'Send token to cex success! https://explorer.aptoslabs.com/txn/{txn_hash}', 'success')
         self.logger_msg(f'Stop full_swap module. Success count: {success_count}', 'success')
         if success_count == 0:
             return False
 
         return True
 
-    # TODO
-    async def reverse_swap(self):
+    #TODO
+    async def full_withdraw(self):
         pass

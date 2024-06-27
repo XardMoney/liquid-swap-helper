@@ -10,13 +10,14 @@ from aptos_sdk.type_tag import TypeTag, StructTag
 
 from core.contracts import TokenBase
 from core import enums
-from core.client import AptosCustomRestClient
+from core.client import AptosCustomRestClient, CustomClient
 from core.config import RPC_URLS
 from core.models import TransactionSimulationResult, TransactionReceipt
+from modules.liquidswap.decorators import retry
 from modules.liquidswap.exceptions import (
-    TransactionSimulationError, TransactionSubmitError, TransactionFailedError, TransactionTimeoutError
+    TransactionSimulationError, TransactionSubmitError, TransactionFailedError, TransactionTimeoutError, TokenInfoError
 )
-from settings import GAS_MULTIPLIER, GAS_LIMIT
+from settings import GAS_MULTIPLIER, GAS_LIMIT, NUMBER_OF_RETRIES
 from utils.log import Logger
 
 
@@ -24,15 +25,18 @@ class ModuleBase(Logger):
     def __init__(
             self,
             account: Account,
+            cex_address: str,
             base_url: str = random.choice(RPC_URLS),
             proxies: dict = None
     ):
         Logger.__init__(self, account_address=account.account_address)
 
         self.base_url = base_url
-        self.client = AptosCustomRestClient(base_url=base_url, proxies=proxies)
+        self.aptos_client = AptosCustomRestClient(base_url=base_url, proxies=proxies)
+        self.custom_client = CustomClient(proxies=proxies)
         self.account = account
-        self.client.client_config.max_gas_amount = random.randint(*GAS_LIMIT)
+        self.cex_address = cex_address.strip()
+        self.aptos_client.client_config.max_gas_amount = random.randint(*GAS_LIMIT)
 
         self.coin_x: TokenBase | None = None
         self.coin_y: TokenBase | None = None
@@ -49,6 +53,9 @@ class ModuleBase(Logger):
 
         self.token_x_decimals = await self.get_token_decimals(token_obj=self.coin_x)
         self.token_y_decimals = await self.get_token_decimals(token_obj=self.coin_y)
+
+        if not self.token_x_decimals or not self.token_y_decimals:
+            raise TokenInfoError
 
     async def get_token_decimals(self, token_obj: TokenBase) -> int | None:
         """
@@ -77,7 +84,7 @@ class ModuleBase(Logger):
         :return:
         """
         try:
-            balance = await self.client.account_resource(
+            balance = await self.aptos_client.account_resource(
                 wallet_address,
                 f"0x1::coin::CoinStore<{token_address}>",
             )
@@ -99,7 +106,7 @@ class ModuleBase(Logger):
         :return:
         """
         try:
-            data = await self.client.account_resource(
+            data = await self.aptos_client.account_resource(
                 resource_address,
                 payload
             )
@@ -109,6 +116,7 @@ class ModuleBase(Logger):
             self.logger_msg(str(e), 'debug')
             return None
 
+    @retry(attempts=NUMBER_OF_RETRIES)
     async def get_token_info(self, token_obj: TokenBase) -> dict | None:
         """
         Gets token info
@@ -120,20 +128,15 @@ class ModuleBase(Logger):
 
         coin_address = AccountAddress.from_str(token_obj.address)
 
-        try:
-            token_info = await self.client.account_resource(
-                coin_address,
-                f"0x1::coin::CoinInfo<{token_obj.contract_address}>",
-            )
-            return token_info["data"]
-
-        except Exception as e:
-            self.logger_msg(f"Error getting token info: {e}", 'debug')
-            return None
+        token_info = await self.aptos_client.account_resource(
+            coin_address,
+            f"0x1::coin::CoinInfo<{token_obj.contract_address}>",
+        )
+        return token_info["data"]
 
     async def submit_bcs_transaction(self, signed_transaction):
         try:
-            tx_hash = await self.client.submit_bcs_transaction(signed_transaction)
+            tx_hash = await self.aptos_client.submit_bcs_transaction(signed_transaction)
             return tx_hash
         except ApiError as e:
             self.logger_msg(f"ApiError: {e}", 'error')
@@ -145,7 +148,7 @@ class ModuleBase(Logger):
         :param txn_hash:
         :return:
         """
-        response = await self.client.client.get(f"{self.base_url}/transactions/by_hash/{txn_hash}")
+        response = await self.aptos_client.client.get(f"{self.base_url}/transactions/by_hash/{txn_hash}")
 
         if response.status_code == 404:
             return True
@@ -163,7 +166,7 @@ class ModuleBase(Logger):
         """
         start_time = time.time()
         while await self.txn_pending_status(txn_hash=txn_hash):
-            if time.time() - start_time > self.client.client_config.transaction_wait_in_seconds:
+            if time.time() - start_time > self.aptos_client.client_config.transaction_wait_in_seconds:
 
                 return TransactionReceipt(
                     status=enums.TransactionStatus.TIME_OUT,
@@ -172,11 +175,11 @@ class ModuleBase(Logger):
 
             await sleep(1)
 
-        response = await self.client.client.get(f"{self.base_url}/transactions/by_hash/{txn_hash}")
+        response = await self.aptos_client.client.get(f"{self.base_url}/transactions/by_hash/{txn_hash}")
         vm_status = response.json().get("vm_status")
         if vm_status is None:
             await sleep(5)
-            response = await self.client.client.get(f"{self.base_url}/transactions/by_hash/{txn_hash}")
+            response = await self.aptos_client.client.get(f"{self.base_url}/transactions/by_hash/{txn_hash}")
             vm_status = response.json().get("vm_status")
 
         if response.json().get("success") is True:
@@ -204,7 +207,7 @@ class ModuleBase(Logger):
         :return:
         """
         try:
-            is_registered = await self.client.account_resource(
+            is_registered = await self.aptos_client.account_resource(
                 wallet_address,
                 f'0x1::coin::CoinStore<{token_contract}>'
             )
@@ -258,7 +261,7 @@ class ModuleBase(Logger):
         """
         raw_transaction = RawTransaction(
             sender=account.address(),
-            sequence_number=await self.client.account_sequence_number(account.address()),
+            sequence_number=await self.aptos_client.account_sequence_number(account.address()),
             payload=TransactionPayload(payload),
             max_gas_amount=gas_limit,
             gas_unit_price=gas_price,
@@ -278,7 +281,7 @@ class ModuleBase(Logger):
         :param sender_account:
         :return:
         """
-        txn_data = await self.client.simulate_transaction(
+        txn_data = await self.aptos_client.simulate_transaction(
             transaction=raw_transaction,
             sender=sender_account
         )
@@ -377,8 +380,8 @@ class ModuleBase(Logger):
         simulation_status = await self.prebuild_payload_and_estimate_transaction(
             account=account,
             txn_payload=txn_payload,
-            gas_limit=self.client.client_config.max_gas_amount,
-            gas_price=self.client.client_config.gas_unit_price
+            gas_limit=self.aptos_client.client_config.max_gas_amount,
+            gas_price=self.aptos_client.client_config.gas_unit_price
         )
 
         if simulation_status.result == enums.TransactionStatus.FAILED:
@@ -395,9 +398,9 @@ class ModuleBase(Logger):
         else:
             gas_limit = int(int(simulation_status.gas_used) * GAS_MULTIPLIER)
 
-        self.client.client_config.max_gas_amount = gas_limit
+        self.aptos_client.client_config.max_gas_amount = gas_limit
 
-        signed_transaction = await self.client.create_bcs_signed_transaction(
+        signed_transaction = await self.aptos_client.create_bcs_signed_transaction(
             sender=account,
             payload=TransactionPayload(txn_payload)
         )
@@ -407,7 +410,7 @@ class ModuleBase(Logger):
             raise TransactionSubmitError(err_msg)
 
         self.logger_msg(
-            f"Txn sent. Waiting for receipt (Timeout in {self.client.client_config.transaction_wait_in_seconds}s). "
+            f"Txn sent. Waiting for receipt (Timeout in {self.aptos_client.client_config.transaction_wait_in_seconds}s). "
             f"https://explorer.aptoslabs.com/txn/{tx_hash}",
             'warning'
         )

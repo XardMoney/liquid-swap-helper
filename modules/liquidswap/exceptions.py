@@ -16,3 +16,11 @@ class TransactionTimeoutError(Exception):
 
 class BuildTransactionError(Exception):
     pass
+
+
+class DashboardRegistrationError(Exception):
+    pass
+
+
+class TokenInfoError(Exception):
+    pass
