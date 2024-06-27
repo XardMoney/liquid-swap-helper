@@ -10,9 +10,10 @@ from settings import DEBUG_MODE
 
 
 class Logger(ABC):
-    def __init__(self, account_address: AccountAddress | None = None):
+    def __init__(self, account_address: AccountAddress | None = None, proxy: str | None = None):
         self.logger = logger
         self.account_address = account_address
+        self.proxy = proxy
 
         self.logger.remove()
         logger_format = "<cyan>{time:HH:mm:ss}</cyan> | <level>" "{level: <8}</level> | <level>{message}</level>"
@@ -33,6 +34,8 @@ class Logger(ABC):
         info = ''
         if self.account_address is not None:
             info += f'[{self.account_address}] |'
+        if self.proxy is not None:
+            info += f'[{self.proxy}] |'
         info += f'[{class_name}] |'
 
         match type_msg:
