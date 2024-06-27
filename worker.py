@@ -19,7 +19,7 @@ class Worker(Logger):
         self.semaphore = semaphore
 
     def check_settings(self):
-        if not settings.AMOUNT_PERCENT and not settings.AMOUNT_QUANTITY:
+        if not settings.SWAP_AMOUNT_PERCENT and not settings.SWAP_AMOUNT_QUANTITY:
             self.logger_msg('AMOUNT_PERCENT and AMOUNT_QUANTITY cannot be an empty value', 'critical')
             return False
 
@@ -71,13 +71,12 @@ class Worker(Logger):
                 await asyncio.sleep(sleep_time)
 
             account = Account.load_key(account_data.private_key)
-            # TODO сделать универсальное получение модулей и методов
             module = LiquidSwapSwap(
                 account,
                 cex_address=account_data.cex_address,
                 proxy=account_data.proxy
             )
-            result = await module.full_swap()
+            result = await module.run()
 
             if result:
                 await append_line(str(account_data.name), "files/succeeded_wallets.txt")

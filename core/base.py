@@ -29,7 +29,9 @@ class ModuleBase(Logger):
             base_url: str = random.choice(RPC_URLS),
             proxies: dict = None
     ):
-        Logger.__init__(self, account_address=account.account_address)
+        Logger.__init__(
+            self, account_address=account.account_address, proxy=proxies.get('http://') if proxies else None)
+
 
         self.base_url = base_url
         self.aptos_client = AptosCustomRestClient(base_url=base_url, proxies=proxies)

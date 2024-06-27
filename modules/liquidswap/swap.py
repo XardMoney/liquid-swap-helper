@@ -213,20 +213,20 @@ class LiquidSwapSwap(ModuleBase):
             self.logger_msg(f"Error while getting initial balance of {self.coin_x.symbol.upper()}", 'error')
             return None
 
-        if initial_balance_x_decimals < settings.MIN_BALANCE:
+        if initial_balance_x_decimals < settings.SWAP_MIN_BALANCE:
             self.logger_msg(
                 f"Wallet {coin_x.symbol.upper()} balance less than min balance, "
-                f"balance: {initial_balance_x_decimals}, min balance: {settings.MIN_BALANCE}",
+                f"balance: {initial_balance_x_decimals}, min balance: {settings.SWAP_MIN_BALANCE}",
                 'error'
             )
             return None
 
-        if settings.AMOUNT_PERCENT:
-            min_amount_out_percent, max_amount_out_percent = settings.AMOUNT_PERCENT
+        if settings.SWAP_AMOUNT_PERCENT:
+            min_amount_out_percent, max_amount_out_percent = settings.SWAP_AMOUNT_PERCENT
             percent = random.randint(int(min_amount_out_percent), int(max_amount_out_percent)) / 100
             amount_out_wei = int(self.initial_balance_x_wei * percent)
-        elif settings.AMOUNT_QUANTITY:
-            min_amount_out, max_amount_out = settings.AMOUNT_QUANTITY
+        elif settings.SWAP_AMOUNT_QUANTITY:
+            min_amount_out, max_amount_out = settings.SWAP_AMOUNT_QUANTITY
 
             if initial_balance_x_decimals < min_amount_out:
                 self.logger_msg(
@@ -411,7 +411,7 @@ class LiquidSwapSwap(ModuleBase):
             return self.check_txn_receipt(txn_receipt, tx_hash)
 
     @swap_retry(attempts=NUMBER_OF_RETRIES)
-    async def send_txn(self, is_reverse: bool = False) -> str | None:
+    async def send_swap_txn(self, is_reverse: bool = False) -> str | None:
         if is_reverse:
             txn_payload_data = await self.build_reverse_transaction_payload()
         else:
@@ -429,10 +429,16 @@ class LiquidSwapSwap(ModuleBase):
         return txn_hash
 
     @retry(attempts=NUMBER_OF_RETRIES)
-    async def send_to_cex(self):
+    async def send_to_cex(self, token: TokenBase):
+        self.aptos_client.client_config.max_gas_amount = random.randint(*settings.GAS_LIMIT)
+        balance_x_wei = await self.get_wallet_token_balance(
+            wallet_address=self.account.address(),
+            token_address=token.contract_address
+        )
         min_amount_out_percent, max_amount_out_percent = settings.WITHDRAW_PERCENT_RANGE
         percent = random.randint(int(min_amount_out_percent), int(max_amount_out_percent)) / 100
-        amount = int(self.initial_balance_x_wei * percent)
+        amount = int(balance_x_wei * percent)
+
         payload = {
             "function": "0x1::aptos_account::transfer",
             "type_arguments": [],
@@ -527,7 +533,7 @@ class LiquidSwapSwap(ModuleBase):
         self.logger_msg(f'Error while dashboard registration! response data: {signature_data}', 'error')
         raise DashboardRegistrationError
 
-    async def full_swap(self):
+    async def full_swap(self) -> bool | None:
         # Execute dashboard registration for airdrop
         await self.dashboard_registration()
 
@@ -568,7 +574,7 @@ class LiquidSwapSwap(ModuleBase):
             )
 
             # Execute
-            txn_hash = await self.send_txn()
+            txn_hash = await self.send_swap_txn()
             if not txn_hash:
                 continue
 
@@ -577,7 +583,7 @@ class LiquidSwapSwap(ModuleBase):
                 self.logger_msg(f'sleeping before reverse swap: {sleep_time} second')
                 await asyncio.sleep(sleep_time)
 
-                txn_hash = await self.send_txn(is_reverse=True)
+                txn_hash = await self.send_swap_txn(is_reverse=True)
                 if not txn_hash:
                     continue
 
@@ -587,14 +593,37 @@ class LiquidSwapSwap(ModuleBase):
             success_count += 1
 
         await asyncio.sleep(random.randint(*settings.SLEEP_RANGE_BEFORE_SEND_TO_CEX))
-        txn_hash = await self.send_to_cex()
-        self.logger_msg(f'Send token to cex success! https://explorer.aptoslabs.com/txn/{txn_hash}', 'success')
+        txn_hash = await self.send_to_cex(self.coin_x)
+        if txn_hash:
+            self.logger_msg(f'Send token to cex success! https://explorer.aptoslabs.com/txn/{txn_hash}', 'success')
         self.logger_msg(f'Stop full_swap module. Success count: {success_count}', 'success')
         if success_count == 0:
             return False
 
         return True
 
-    #TODO
-    async def full_withdraw(self):
-        pass
+    async def withdraw_only(self) -> bool | None:
+        self.logger_msg(f'Start only withdraw module.', 'success')
+        self.coin_y = TokenBase(settings.TOKEN_SWAP_INPUT, TOKENS_INFO[settings.TOKEN_SWAP_INPUT])
+        for out_token in settings.TOKENS_SWAP_OUTPUT:
+            self.coin_x = TokenBase(out_token, TOKENS_INFO[out_token])
+            self.logger_msg(f'out_token: {self.coin_x.symbol}', 'debug')
+            self.logger_msg(f'out_token contract: {self.coin_x.contract_address}', 'debug')
+            await self.async_init()
+
+            # Execute
+            txn_hash = await self.send_swap_txn()
+            if not txn_hash:
+                continue
+            await asyncio.sleep(random.randint(10, 30))
+
+        sleep_time = random.randint(*settings.SLEEP_RANGE_BEFORE_SEND_TO_CEX)
+        self.logger_msg(f'Sleep before send to cex. {sleep_time} second', 'debug')
+        await asyncio.sleep(sleep_time)
+        return await self.send_to_cex(self.coin_y)
+
+    async def run(self) -> bool | None:
+        if settings.ONLY_WITHDRAW:
+            return await self.withdraw_only()
+        else:
+            return await self.full_swap()

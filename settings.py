@@ -5,10 +5,13 @@ load_dotenv()
 
 DEBUG_MODE = os.getenv('DEBUG_MODE', 0)
 
-SHUFFLE_ACCOUNTS = False
+# Main settings
+ONLY_WITHDRAW = False
+
+SHUFFLE_ACCOUNTS = True
 
 # Limit of accounts that can be run concurrently
-SEMAPHORE_LIMIT = 1
+SEMAPHORE_LIMIT = 3
 
 # Limit of retries for all the actions
 NUMBER_OF_RETRIES = 5
@@ -19,9 +22,9 @@ SLEEP_RANGE_BETWEEN_ATTEMPT = [10, 20]  # [0, 10000]
 # Swap settings
 TOKEN_SWAP_INPUT = "APT"  # "APT", "stAPTDitto", "stAPTAmnis"
 TOKENS_SWAP_OUTPUT = ["stAPTDitto", "stAPTAmnis"]  # "APT", "stAPTDitto", "stAPTAmnis"
-MIN_BALANCE = 3 # 0.1 - 1000
-AMOUNT_PERCENT = (85, 95)  # (1, 100)
-AMOUNT_QUANTITY = (0.15, 0.5)  # (0.1, 5)
+SWAP_MIN_BALANCE = 2 # 0.1 - 1000
+SWAP_AMOUNT_PERCENT = (85, 95)  # (1, 100)
+SWAP_AMOUNT_QUANTITY = (0.15, 0.5)  # (0.1, 5)
 
 SLEEP_RANGE_BETWEEN_REVERSE_SWAP = [150, 250]  # [0, 10000]
 REVERSE_SWAP = True  # True/False
@@ -30,7 +33,7 @@ SWAPS_LIMIT_RANGE = [2, 5]  # [1, 5]
 GAS_MULTIPLIER = 1.25  # 1.01 - 2
 
 # Gas limit of each transaction, 100000 = 0.1 APT (random selection)
-GAS_LIMIT = [5200, 5700]
+GAS_LIMIT = [1200, 2300]
 
 
 '-------------------------------------------DASHBOARD REGISTRATION----------------------------------------------------'
@@ -50,7 +53,7 @@ EXCEL_PAGE_NAME = "data"
 
 MIN_WALLET_BALANCE = 2
 DEPOSIT_LIMIT_RANGE = [10, 15]
-SLEEP_RANGE_BEFORE_SEND_TO_CEX = [100, 300]
+SLEEP_RANGE_BEFORE_SEND_TO_CEX = [30, 60]
 WITHDRAW_PERCENT_RANGE = (90, 95)
 
 COLLECT_FROM_SUB_CEX = True
